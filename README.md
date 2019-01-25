@@ -32,3 +32,7 @@ model.train(data)
 
 print(model.predict(test_data))
 ```
+
+### Todos 
+1. Implement "Warm Start" to speed up the time to solve the Mixed Integer Linear Programming (MILP); 
+2. Implement heuristics such as Generic Algorithms to approximate the optimal solution rapidly (but may be loss of accuracy);
