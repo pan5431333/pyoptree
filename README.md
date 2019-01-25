@@ -1,5 +1,5 @@
 # pyoptree
-Python Implementation of Bertsimas's "Optimal classification trees". 
+Python Optimal Tree
 
 ### Dependencies 
 #### Python dependencies (through pip)
