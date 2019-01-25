@@ -46,6 +46,7 @@ class OptimalTreeModel:
         assert tree_depth > 0, "Tree depth must be greater than 0! (Actual: {0})".format(tree_depth)
 
     def train(self, data: pd.DataFrame):
+        data = data.copy()
         for col in self.P_range:
             col_max = max(data[col])
             col_min = min(data[col])
@@ -74,19 +75,20 @@ class OptimalTreeModel:
         if not self.is_trained:
             raise ValueError("Model has not been trained yet! Please use `train()` to train the model first!")
 
+        new_data = data.copy()
         new_data_cols = data.columns
         for col in self.P_range:
             if col not in new_data_cols:
                 raise ValueError("Column {0} is not in the given data for prediction! ".format(col))
             col_max, col_min = self.normalizer[col]
             if col_max != col_min:
-                data[col] = (data[col] - col_min) / (col_max - col_min)
+                new_data[col] = (data[col] - col_min) / (col_max - col_min)
             else:
-                data[col] = 1
+                new_data[col] = 1
 
         prediction = []
-        for j in range(data.shape[0]):
-            x = np.array([data.ix[j, i] for i in self.P_range])
+        for j in range(new_data.shape[0]):
+            x = np.array([new_data.ix[j, i] for i in self.P_range])
             t = 1
             d = 0
             while d < self.D:
@@ -261,6 +263,7 @@ class OptimalHyperTreeModel:
         assert tree_depth > 0, "Tree depth must be greater than 0! (Actual: {0})".format(tree_depth)
 
     def train(self, data: pd.DataFrame):
+        data = data.copy()
         for col in self.P_range:
             col_max = max(data[col])
             col_min = min(data[col])
@@ -289,19 +292,20 @@ class OptimalHyperTreeModel:
         if not self.is_trained:
             raise ValueError("Model has not been trained yet! Please use `train()` to train the model first!")
 
+        new_data = data.copy()
         new_data_cols = data.columns
         for col in self.P_range:
             if col not in new_data_cols:
                 raise ValueError("Column {0} is not in the given data for prediction! ".format(col))
             col_max, col_min = self.normalizer[col]
             if col_max != col_min:
-                data[col] = (data[col] - col_min) / (col_max - col_min)
+                new_data[col] = (data[col] - col_min) / (col_max - col_min)
             else:
-                data[col] = 1
+                new_data[col] = 1
 
         prediction = []
-        for j in range(data.shape[0]):
-            x = np.array([data.ix[j, i] for i in self.P_range])
+        for j in range(new_data.shape[0]):
+            x = np.array([new_data.ix[j, i] for i in self.P_range])
             t = 1
             d = 0
             while d < self.D:
