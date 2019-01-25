@@ -1,14 +1,14 @@
 # pyoptree
 Python Optimal Tree
 
-### Dependencies 
-#### Python dependencies (through pip)
-1. numpy 
-2. pandas 
-3. pyomo 
+### Install 
+#### First install pyoptree through pip
+```
+pip3 install pyoptree
+```
 
-#### Solver dependencies 
-The user needs to have IBM Cplex or Gurobi installed on their computer, and make sure that the executable has been added to PATH environment viariable (i.e. command `cplex` or `gurobi` can be run on terminal). 
+#### Then install solver (IMPORTANT!) 
+The user needs to have **IBM Cplex** or **Gurobi** installed on their computer, and make sure that **the executable has been added to PATH environment variable** (i.e. command `cplex` or `gurobi` can be run on terminal). 
 
 ### Example 
 ```python
