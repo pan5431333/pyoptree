@@ -76,6 +76,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         self.Nkt = {t: [value(model.Nkt[k, t]) for k in self.K_range] for t in self.leaf_ndoes}
         self.Lt = {t: value(model.Lt[t]) for t in self.leaf_ndoes}
         logging.info("Training done. Loss: {1}. Optimization status: {0}".format(status, loss))
+        logging.info("Training done(Contd.): training accuracy: {0}".format(1 - sum(self.Lt.values()) / data.shape[0]))
 
     @abstractmethod
     def generate_model(self, data: pd.DataFrame):
@@ -259,6 +260,9 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
     def _feature_importance(self):
         importance_scores = np.array([self.a[t] for t in self.a]).sum(axis=0)
         return {x: s for x, s in zip(self.P_range, importance_scores)}
+
+    def _get_cart_solution(self, data: pd.DataFrame):
+        DecisionTreeClassifier()
 
 
 class OptimalHyperTreeModel(AbstractOptimalTreeModel):
