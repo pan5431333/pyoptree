@@ -34,8 +34,8 @@ print(model.predict(test_data))
 ```
 
 ### Todos 
-1. Implement "Warm Start" to speed up the time to solve the Mixed Integer Linear Programming (MILP); 
-2. Implement heuristics such as Generic Algorithms to approximate the optimal solution rapidly (but may be loss of accuracy);
+1. Implement "Warm Start" to speed up the time to solve the Mixed Integer Linear Programming (MILP); （Done √）
+2. Implement heuristics such as CART、Generic Algorithms to approximate the optimal solution rapidly (but may be loss of accuracy);
 
 ### Hyper-parameter Tuning Experience 
 Generally, there are three hyper-parameters that could be tuned for the Optimal Tree model: 
