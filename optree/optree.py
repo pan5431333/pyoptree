@@ -45,7 +45,7 @@ class OptimalTreeModel:
 
         assert tree_depth > 0, "Tree depth must be greater than 0! (Actual: {0})".format(tree_depth)
 
-    def train(self, data: pd.DataFrame):
+    def train(self, data: pd.DataFrame, show_training_process: bool = True):
         data = data.copy()
         for col in self.P_range:
             col_max = max(data[col])
@@ -57,7 +57,7 @@ class OptimalTreeModel:
                 data[col] = 1
         model = self.__generate_model(data.reset_index(drop=True))
         solver = SolverFactory(self.solver_name)
-        res = solver.solve(model)
+        res = solver.solve(model, tee=show_training_process)
         status = str(res.solver.termination_condition)
         self.is_trained = True
         loss = value(model.obj)
@@ -262,7 +262,7 @@ class OptimalHyperTreeModel:
 
         assert tree_depth > 0, "Tree depth must be greater than 0! (Actual: {0})".format(tree_depth)
 
-    def train(self, data: pd.DataFrame):
+    def train(self, data: pd.DataFrame, show_training_process: bool = True):
         data = data.copy()
         for col in self.P_range:
             col_max = max(data[col])
@@ -274,7 +274,7 @@ class OptimalHyperTreeModel:
                 data[col] = 1
         model = self.__generate_model(data.reset_index(drop=True))
         solver = SolverFactory(self.solver_name)
-        res = solver.solve(model)
+        res = solver.solve(model, tee=show_training_process)
         status = str(res.solver.termination_condition)
         self.is_trained = True
         loss = value(model.obj)
