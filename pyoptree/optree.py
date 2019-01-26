@@ -9,7 +9,6 @@ from pyomo.opt.base.solvers import *
 import logging
 import numpy as np
 from abc import abstractmethod, ABCMeta
-from sklearn.tree import DecisionTreeClassifier
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s', )
@@ -30,9 +29,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         self.epsilon = epsilon
         self.alpha = alpha
         self.is_trained = False
-        nodes = list(range(1, (2 ** (self.D + 1))))
-        self.parent_nodes = nodes[0: 2 ** (self.D + 1) - 2 ** self.D - 1]
-        self.leaf_ndoes = nodes[-2 ** self.D:]
+        self.parent_nodes, self.leaf_ndoes = self.generate_nodes(self.D)
         self.normalizer = {}
 
         # optimization model
@@ -59,28 +56,54 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
                 data[col] = (data[col] - col_min) / (col_max - col_min)
             else:
                 data[col] = 1
-        model = self.generate_model(data.reset_index(drop=True))
-        self.model = model
+
         solver = SolverFactory(self.solver_name)
         solver.options["LPMethod"] = 4
-        res = solver.solve(model, tee=show_training_process)
-        status = str(res.solver.termination_condition)
-        self.is_trained = True
-        loss = value(model.obj)
-        self.l = {t: value(model.l[t]) for t in self.leaf_ndoes}
-        self.c = {t: [value(model.c[k, t]) for k in self.K_range] for t in self.leaf_ndoes}
-        self.d = {t: value(model.d[t]) for t in self.parent_nodes}
-        self.a = {t: [value(model.a[j, t]) for j in self.P_range] for t in self.parent_nodes}
-        self.b = {t: value(model.bt[t]) for t in self.parent_nodes}
-        self.Nt = {t: value(model.Nt[t]) for t in self.leaf_ndoes}
-        self.Nkt = {t: [value(model.Nkt[k, t]) for k in self.K_range] for t in self.leaf_ndoes}
-        self.Lt = {t: value(model.Lt[t]) for t in self.leaf_ndoes}
-        logging.info("Training done. Loss: {1}. Optimization status: {0}".format(status, loss))
+
+        global_status = "Not started"
+        global_loss = np.inf
+        warm_start_params = None
+        for d in range(1, self.D + 1):
+            if d < self.D:
+                logging.info("Warm starting the optimization with tree depth {0} / {1}...".format(d, self.D))
+            else:
+                logging.info("Optimizing the tree with depth {0}...".format(self.D))
+
+            parent_nodes, leaf_nodes = self.generate_nodes(d)
+            model = self.generate_model(data.reset_index(drop=True), parent_nodes, leaf_nodes, warm_start_params)
+
+            res = solver.solve(model, tee=show_training_process, warmstart=True)
+            status = str(res.solver.termination_condition)
+            loss = value(model.obj)
+
+            warm_start_params = self._generate_warm_start_params_from_previous_depth(model, data.shape[0],
+                                                                                     parent_nodes, leaf_nodes)
+
+            if d == self.D:
+                global_status = status
+                global_loss = loss
+                self.model = model
+                self.is_trained = True
+                self.l = {t: value(model.l[t]) for t in self.leaf_ndoes}
+                self.c = {t: [value(model.c[k, t]) for k in self.K_range] for t in self.leaf_ndoes}
+                self.d = {t: value(model.d[t]) for t in self.parent_nodes}
+                self.a = {t: [value(model.a[j, t]) for j in self.P_range] for t in self.parent_nodes}
+                self.b = {t: value(model.bt[t]) for t in self.parent_nodes}
+                self.Nt = {t: value(model.Nt[t]) for t in self.leaf_ndoes}
+                self.Nkt = {t: [value(model.Nkt[k, t]) for k in self.K_range] for t in self.leaf_ndoes}
+                self.Lt = {t: value(model.Lt[t]) for t in self.leaf_ndoes}
+
+        logging.info("Training done. Loss: {1}. Optimization status: {0}".format(global_status, global_loss))
         logging.info("Training done(Contd.): training accuracy: {0}".format(1 - sum(self.Lt.values()) / data.shape[0]))
 
     @abstractmethod
-    def generate_model(self, data: pd.DataFrame):
+    def generate_model(self, data: pd.DataFrame, parent_nodes: list, leaf_nodes: list, warm_start_params: dict = None):
         """Generate the corresponding model instance"""
+        pass
+
+    @abstractmethod
+    def _generate_warm_start_params_from_previous_depth(self, model, n_training_data: int,
+                                                        parent_nodes: list, leaf_nodes: list):
         pass
 
     def get_feature_importance(self):
@@ -145,9 +168,16 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
             j = int(j / 2)
         return left_ancestors, right_ancestors
 
+    @staticmethod
+    def generate_nodes(tree_depth: int):
+        nodes = list(range(1, int(2 ** (tree_depth + 1))))
+        parent_nodes = nodes[0: 2 ** (tree_depth + 1) - 2 ** tree_depth - 1]
+        leaf_ndoes = nodes[-2 ** tree_depth:]
+        return parent_nodes, leaf_ndoes
+
 
 class OptimalTreeModel(AbstractOptimalTreeModel):
-    def generate_model(self, data: pd.DataFrame):
+    def generate_model(self, data: pd.DataFrame, parent_nodes: list, leaf_ndoes: list, warm_start_params: dict = None):
         model = ConcreteModel(name="OptimalTreeModel")
         n = data.shape[0]
         label = data[[self.y_col]].copy()
@@ -164,20 +194,19 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
 
         self.K_range = K_range
 
-        parent_nodes = self.parent_nodes
-        leaf_ndoes = self.leaf_ndoes
+        warm_start_params = {} if warm_start_params is None else warm_start_params
 
         # Variables
-        model.z = Var(n_range, leaf_ndoes, within=Binary)
-        model.l = Var(leaf_ndoes, within=Binary)
-        model.c = Var(K_range, leaf_ndoes, within=Binary)
-        model.d = Var(parent_nodes, within=Binary)
-        model.a = Var(P_range, parent_nodes, within=Binary)
+        model.z = Var(n_range, leaf_ndoes, within=Binary, initialize=warm_start_params.get("z"))
+        model.l = Var(leaf_ndoes, within=Binary, initialize=warm_start_params.get("l"))
+        model.c = Var(K_range, leaf_ndoes, within=Binary, initialize=warm_start_params.get("c"))
+        model.d = Var(parent_nodes, within=Binary, initialize=warm_start_params.get("d"))
+        model.a = Var(P_range, parent_nodes, within=Binary, initialize=warm_start_params.get("a"))
 
-        model.Nt = Var(leaf_ndoes, within=NonNegativeReals)
-        model.Nkt = Var(K_range, leaf_ndoes, within=NonNegativeReals)
-        model.Lt = Var(leaf_ndoes, within=NonNegativeReals)
-        model.bt = Var(parent_nodes, within=NonNegativeReals)
+        model.Nt = Var(leaf_ndoes, within=NonNegativeReals, initialize=warm_start_params.get("Nt"))
+        model.Nkt = Var(K_range, leaf_ndoes, within=NonNegativeReals, initialize=warm_start_params.get("Nkt"))
+        model.Lt = Var(leaf_ndoes, within=NonNegativeReals, initialize=warm_start_params.get("Lt"))
+        model.bt = Var(parent_nodes, within=NonNegativeReals, initialize=warm_start_params.get("bt"))
 
         # Constraints
         model.integer_relationship_constraints = ConstraintList()
@@ -261,12 +290,33 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
         importance_scores = np.array([self.a[t] for t in self.a]).sum(axis=0)
         return {x: s for x, s in zip(self.P_range, importance_scores)}
 
-    def _get_cart_solution(self, data: pd.DataFrame):
-        DecisionTreeClassifier()
+    def _generate_warm_start_params_from_previous_depth(self, model, n_training_data: int,
+                                                        parent_nodes: list, leaf_nodes: list):
+        ret = {}
+        D = int(np.log2(len(leaf_nodes))) + 1
+        new_parent_nodes, new_leaf_nodes = self.generate_nodes(D)
+        n_range = range(n_training_data)
+
+        ret["z"] = {(i, t): int(value(model.z[i, int(t/2)])) if t % 2 == 1 else 0 for i in n_range for t in new_leaf_nodes}
+        ret["l"] = {t: int(value(model.l[int(t/2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret["c"] = {(k, t): int(value(model.c[k, int(t/2)])) if t % 2 == 1 else 0 for k in self.K_range for t in new_leaf_nodes}
+        ret_d_1 = {t: int(value(model.d[t])) for t in parent_nodes}
+        ret_d_2 = {t: 0 for t in leaf_nodes}
+        ret["d"] = {**ret_d_1, **ret_d_2}
+        ret_a_1 = {(j, t): int(value(model.a[j, t])) for j in self.P_range for t in parent_nodes}
+        ret_a_2 = {(j, t): 0 for j in self.P_range for t in leaf_nodes}
+        ret["a"] = {**ret_a_1, **ret_a_2}
+        ret["Nt"] = {t: value(model.Nt[int(t/2)]) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret["Nkt"] = {(k, t): value(model.Nkt[k, int(t/2)]) if t % 2 == 1 else 0 for k in self.K_range for t in new_leaf_nodes}
+        ret["Lt"] = {t: value(model.Lt[int(t/2)]) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret_b_1 = {t: value(model.bt[t]) for t in parent_nodes}
+        ret_b_2 = {t: 0 for t in leaf_nodes}
+        ret["bt"] = {**ret_b_1, **ret_b_2}
+        return ret
 
 
 class OptimalHyperTreeModel(AbstractOptimalTreeModel):
-    def generate_model(self, data: pd.DataFrame):
+    def generate_model(self, data: pd.DataFrame, parent_nodes: list, leaf_ndoes: list, warm_start_params: dict = None):
         model = ConcreteModel(name="OptimalTreeModel")
         n = data.shape[0]
         label = data[[self.y_col]].copy()
@@ -283,22 +333,21 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
 
         self.K_range = K_range
 
-        parent_nodes = self.parent_nodes
-        leaf_ndoes = self.leaf_ndoes
+        warm_start_params = {} if warm_start_params is None else warm_start_params
 
         # Variables
-        model.z = Var(n_range, leaf_ndoes, within=Binary)
-        model.l = Var(leaf_ndoes, within=Binary)
-        model.c = Var(K_range, leaf_ndoes, within=Binary)
-        model.d = Var(parent_nodes, within=Binary)
-        model.s = Var(P_range, parent_nodes, within=Binary)
+        model.z = Var(n_range, leaf_ndoes, within=Binary, initialize=warm_start_params.get("z"))
+        model.l = Var(leaf_ndoes, within=Binary, initialize=warm_start_params.get("l"))
+        model.c = Var(K_range, leaf_ndoes, within=Binary, initialize=warm_start_params.get("c"))
+        model.d = Var(parent_nodes, within=Binary, initialize=warm_start_params.get("d"))
+        model.s = Var(P_range, parent_nodes, within=Binary, initialize=warm_start_params.get("s"))
 
-        model.Nt = Var(leaf_ndoes, within=NonNegativeReals)
-        model.Nkt = Var(K_range, leaf_ndoes, within=NonNegativeReals)
-        model.Lt = Var(leaf_ndoes, within=NonNegativeReals)
-        model.a = Var(P_range, parent_nodes)
-        model.bt = Var(parent_nodes)
-        model.a_hat_jt = Var(P_range, parent_nodes, within=NonNegativeReals)
+        model.Nt = Var(leaf_ndoes, within=NonNegativeReals, initialize=warm_start_params.get("Nt"))
+        model.Nkt = Var(K_range, leaf_ndoes, within=NonNegativeReals, initialize=warm_start_params.get("Nkt"))
+        model.Lt = Var(leaf_ndoes, within=NonNegativeReals, initialize=warm_start_params.get("Lt"))
+        model.a = Var(P_range, parent_nodes, initialize=warm_start_params.get("a"))
+        model.bt = Var(parent_nodes, initialize=warm_start_params.get("bt"))
+        model.a_hat_jt = Var(P_range, parent_nodes, within=NonNegativeReals, initialize=warm_start_params.get("a_hat_jt"))
 
         # Constraints
         model.integer_relationship_constraints = ConstraintList()
@@ -411,6 +460,36 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
             [[value(self.model.s[j, t]) * value(self.model.a_hat_jt[j, t]) for j in self.P_range] for t in
              self.parent_nodes]).sum(axis=0)
         return {x: s for x, s in zip(self.P_range, importance_scores)}
+
+    def _generate_warm_start_params_from_previous_depth(self, model, n_training_data: int,
+                                                        parent_nodes: list, leaf_nodes: list):
+        ret = {}
+        D = int(np.log2(len(leaf_nodes))) + 1
+        new_parent_nodes, new_leaf_nodes = self.generate_nodes(D)
+        n_range = range(n_training_data)
+
+        ret["z"] = {(i, t): int(value(model.z[i, int(t/2)])) if t % 2 == 1 else 0 for i in n_range for t in new_leaf_nodes}
+        ret["l"] = {t: int(value(model.l[int(t/2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret["c"] = {(k, t): int(value(model.c[k, int(t/2)])) if t % 2 == 1 else 0 for k in self.K_range for t in new_leaf_nodes}
+        ret_d_1 = {t: int(value(model.d[t])) for t in parent_nodes}
+        ret_d_2 = {t: 0 for t in leaf_nodes}
+        ret["d"] = {**ret_d_1, **ret_d_2}
+        ret_s_1 = {(j, t): int(value(model.s[j, t])) for j in self.P_range for t in parent_nodes}
+        ret_s_2 = {(j, t): 0 for j in self.P_range for t in leaf_nodes}
+        ret["s"] = {**ret_s_1, **ret_s_2}
+        ret["Nt"] = {t: value(model.Nt[int(t/2)]) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret["Nkt"] = {(k, t): value(model.Nkt[k, int(t/2)]) if t % 2 == 1 else 0 for k in self.K_range for t in new_leaf_nodes}
+        ret["Lt"] = {t: value(model.Lt[int(t/2)]) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret_a_1 = {(j, t): value(model.a[j, t]) for j in self.P_range for t in parent_nodes}
+        ret_a_2 = {(j, t): 0 for j in self.P_range for t in leaf_nodes}
+        ret["a"] = {**ret_a_1, **ret_a_2}
+        ret_b_1 = {t: value(model.bt[t]) for t in parent_nodes}
+        ret_b_2 = {t: 0 for t in leaf_nodes}
+        ret["bt"] = {**ret_b_1, **ret_b_2}
+        ret_a_hat_jt_1 = {(j, t): value(model.a_hat_jt[j, t]) for j in self.P_range for t in parent_nodes}
+        ret_a_hat_jt_2 = {(j, t): 0 for j in self.P_range for t in parent_nodes}
+        ret["a_hat_jt"] = {**ret_a_hat_jt_1, **ret_a_hat_jt_2}
+        return ret
 
 
 if __name__ == "__main__":
