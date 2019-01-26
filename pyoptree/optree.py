@@ -9,6 +9,7 @@ from pyomo.opt.base.solvers import *
 import logging
 import numpy as np
 from abc import abstractmethod, ABCMeta
+from sklearn.tree import DecisionTreeClassifier
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s', )
@@ -34,6 +35,9 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         self.leaf_ndoes = nodes[-2 ** self.D:]
         self.normalizer = {}
 
+        # optimization model
+        self.model = None
+
         # solutions
         self.l = None
         self.c = None
@@ -56,6 +60,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
             else:
                 data[col] = 1
         model = self.generate_model(data.reset_index(drop=True))
+        self.model = model
         solver = SolverFactory(self.solver_name)
         solver.options["LPMethod"] = 4
         res = solver.solve(model, tee=show_training_process)
@@ -75,6 +80,16 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
     @abstractmethod
     def generate_model(self, data: pd.DataFrame):
         """Generate the corresponding model instance"""
+        pass
+
+    def get_feature_importance(self):
+        if not self.is_trained:
+            raise ValueError("Model has not been trained yet! Please use `train()` to train the model first!")
+
+        return self._feature_importance()
+
+    @abstractmethod
+    def _feature_importance(self):
         pass
 
     def predict(self, data: pd.DataFrame):
@@ -131,7 +146,6 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
 
 
 class OptimalTreeModel(AbstractOptimalTreeModel):
-
     def generate_model(self, data: pd.DataFrame):
         model = ConcreteModel(name="OptimalTreeModel")
         n = data.shape[0]
@@ -228,7 +242,7 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
                         expr=sum([model.a[j, m] * data.loc[i, j] for j in P_range]) + self.epsilon <= model.bt[m] + (1 -
                                                                                                                      model.z[
                                                                                                                          i, t]) * (
-                                                                                                                    self.M + self.epsilon)
+                                                                                                                        self.M + self.epsilon)
                     )
         for t in parent_nodes:
             model.parent_branching_constraints.add(
@@ -241,6 +255,10 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
         )
 
         return model
+
+    def _feature_importance(self):
+        importance_scores = np.array([self.a[t] for t in self.a]).sum(axis=0)
+        return {x: s for x, s in zip(self.P_range, importance_scores)}
 
 
 class OptimalHyperTreeModel(AbstractOptimalTreeModel):
@@ -345,10 +363,10 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
                 for m in left_ancestors:
                     model.parent_branching_constraints.add(
                         expr=sum([model.a[j, m] * data.loc[i, j] for j in P_range]) + self.epsilon <= model.bt[m] + (
-                                                                                                                      1 -
-                                                                                                                      model.z[
-                                                                                                                          i, t]) * (
-                                                                                                                      self.M + self.epsilon)
+                                                                                                                        1 -
+                                                                                                                        model.z[
+                                                                                                                            i, t]) * (
+                                                                                                                        self.M + self.epsilon)
                     )
         for t in parent_nodes:
             model.parent_branching_constraints.add(
@@ -383,6 +401,12 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         )
 
         return model
+
+    def _feature_importance(self):
+        importance_scores = np.array(
+            [[value(self.model.s[j, t]) * value(self.model.a_hat_jt[j, t]) for j in self.P_range] for t in
+             self.parent_nodes]).sum(axis=0)
+        return {x: s for x, s in zip(self.P_range, importance_scores)}
 
 
 if __name__ == "__main__":
