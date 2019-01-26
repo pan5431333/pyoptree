@@ -107,7 +107,7 @@ class OptimalTreeModel:
     def __generate_model(self, data: pd.DataFrame):
         model = ConcreteModel(name="OptimalTreeModel")
         n = data.shape[0]
-        label = data[[self.y_col]]
+        label = data[[self.y_col]].copy()
         label["__value__"] = 1
         Y = label.pivot(columns=self.y_col, values="__value__")
 
@@ -324,7 +324,7 @@ class OptimalHyperTreeModel:
     def __generate_model(self, data: pd.DataFrame):
         model = ConcreteModel(name="OptimalTreeModel")
         n = data.shape[0]
-        label = data[[self.y_col]]
+        label = data[[self.y_col]].copy()
         label["__value__"] = 1
         Y = label.pivot(columns=self.y_col, values="__value__")
 
