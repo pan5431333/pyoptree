@@ -1,5 +1,5 @@
 import pandas as pd
-from optree.optree import OptimalHyperTreeModel, OptimalTreeModel
+from pyoptree.optree import OptimalHyperTreeModel, OptimalTreeModel
 
 data = pd.DataFrame({
         "index": ['A', 'C', 'D', 'E', 'F'],
