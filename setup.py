@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='pyoptree',
-    version="0.1.2",
+    version="0.1.3",
     description=(
         "Python Implementation of Bertsimas's paper Optimal Classification Trees."
     ),
