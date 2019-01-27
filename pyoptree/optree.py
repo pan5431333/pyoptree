@@ -175,6 +175,13 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         leaf_ndoes = nodes[-2 ** tree_depth:]
         return parent_nodes, leaf_ndoes
 
+    @staticmethod
+    def positive_or_zero(i: float):
+        if i >= 0:
+            return i
+        else:
+            return 0
+
 
 class OptimalTreeModel(AbstractOptimalTreeModel):
     def generate_model(self, data: pd.DataFrame, parent_nodes: list, leaf_ndoes: list, warm_start_params: dict = None):
@@ -306,10 +313,10 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
         ret_a_1 = {(j, t): int(value(model.a[j, t])) for j in self.P_range for t in parent_nodes}
         ret_a_2 = {(j, t): 0 for j in self.P_range for t in leaf_nodes}
         ret["a"] = {**ret_a_1, **ret_a_2}
-        ret["Nt"] = {t: value(model.Nt[int(t/2)]) if t % 2 == 1 else 0 for t in new_leaf_nodes}
-        ret["Nkt"] = {(k, t): value(model.Nkt[k, int(t/2)]) if t % 2 == 1 else 0 for k in self.K_range for t in new_leaf_nodes}
-        ret["Lt"] = {t: value(model.Lt[int(t/2)]) if t % 2 == 1 else 0 for t in new_leaf_nodes}
-        ret_b_1 = {t: value(model.bt[t]) for t in parent_nodes}
+        ret["Nt"] = {t: self.positive_or_zero(value(model.Nt[int(t/2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret["Nkt"] = {(k, t): self.positive_or_zero(value(model.Nkt[k, int(t/2)])) if t % 2 == 1 else 0 for k in self.K_range for t in new_leaf_nodes}
+        ret["Lt"] = {t: self.positive_or_zero(value(model.Lt[int(t/2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret_b_1 = {t: self.positive_or_zero(value(model.bt[t])) for t in parent_nodes}
         ret_b_2 = {t: 0 for t in leaf_nodes}
         ret["bt"] = {**ret_b_1, **ret_b_2}
         return ret
@@ -477,16 +484,16 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         ret_s_1 = {(j, t): int(value(model.s[j, t])) for j in self.P_range for t in parent_nodes}
         ret_s_2 = {(j, t): 0 for j in self.P_range for t in leaf_nodes}
         ret["s"] = {**ret_s_1, **ret_s_2}
-        ret["Nt"] = {t: value(model.Nt[int(t/2)]) if t % 2 == 1 else 0 for t in new_leaf_nodes}
-        ret["Nkt"] = {(k, t): value(model.Nkt[k, int(t/2)]) if t % 2 == 1 else 0 for k in self.K_range for t in new_leaf_nodes}
-        ret["Lt"] = {t: value(model.Lt[int(t/2)]) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret["Nt"] = {t: self.positive_or_zero(value(model.Nt[int(t/2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret["Nkt"] = {(k, t): self.positive_or_zero(value(model.Nkt[k, int(t/2)])) if t % 2 == 1 else 0 for k in self.K_range for t in new_leaf_nodes}
+        ret["Lt"] = {t: self.positive_or_zero(value(model.Lt[int(t/2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
         ret_a_1 = {(j, t): value(model.a[j, t]) for j in self.P_range for t in parent_nodes}
         ret_a_2 = {(j, t): 0 for j in self.P_range for t in leaf_nodes}
         ret["a"] = {**ret_a_1, **ret_a_2}
         ret_b_1 = {t: value(model.bt[t]) for t in parent_nodes}
         ret_b_2 = {t: 0 for t in leaf_nodes}
         ret["bt"] = {**ret_b_1, **ret_b_2}
-        ret_a_hat_jt_1 = {(j, t): value(model.a_hat_jt[j, t]) for j in self.P_range for t in parent_nodes}
+        ret_a_hat_jt_1 = {(j, t): self.positive_or_zero(value(model.a_hat_jt[j, t])) for j in self.P_range for t in parent_nodes}
         ret_a_hat_jt_2 = {(j, t): 0 for j in self.P_range for t in parent_nodes}
         ret["a_hat_jt"] = {**ret_a_hat_jt_1, **ret_a_hat_jt_2}
         return ret
