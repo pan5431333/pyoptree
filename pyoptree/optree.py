@@ -9,6 +9,8 @@ from pyomo.opt.base.solvers import *
 import logging
 import numpy as np
 from abc import abstractmethod, ABCMeta
+from sklearn.tree import DecisionTreeClassifier
+from inspect import getmembers
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s', )
@@ -46,8 +48,8 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         self.Lt = None
         assert tree_depth > 0, "Tree depth must be greater than 0! (Actual: {0})".format(tree_depth)
 
-    def train(self, data: pd.DataFrame, show_training_process: bool = True):
-        data = data.copy()
+    def train(self, data: pd.DataFrame, show_training_process: bool = True, warm_start: bool = True):
+        data = data.copy().reset_index(drop=True)
         for col in self.P_range:
             col_max = max(data[col])
             col_min = min(data[col])
@@ -60,24 +62,31 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         solver = SolverFactory(self.solver_name)
         solver.options["LPMethod"] = 4
 
+        start_tree_depth = 1 if warm_start else self.D
+
         global_status = "Not started"
         global_loss = np.inf
-        warm_start_params = None
-        for d in range(1, self.D + 1):
+        previous_depth_params = None
+        for d in range(start_tree_depth, self.D + 1):
             if d < self.D:
                 logging.info("Warm starting the optimization with tree depth {0} / {1}...".format(d, self.D))
             else:
                 logging.info("Optimizing the tree with depth {0}...".format(self.D))
 
+            warm_start_params = None
+            if warm_start:
+                cart_params = self._get_cart_params(data, d)
+                warm_start_params = self._select_better_warm_start_params([previous_depth_params, cart_params], data)
+
             parent_nodes, leaf_nodes = self.generate_nodes(d)
-            model = self.generate_model(data.reset_index(drop=True), parent_nodes, leaf_nodes, warm_start_params)
+            model = self.generate_model(data, parent_nodes, leaf_nodes, warm_start_params)
 
             res = solver.solve(model, tee=show_training_process, warmstart=True)
             status = str(res.solver.termination_condition)
             loss = value(model.obj)
 
-            warm_start_params = self._generate_warm_start_params_from_previous_depth(model, data.shape[0],
-                                                                                     parent_nodes, leaf_nodes)
+            previous_depth_params = self._generate_warm_start_params_from_previous_depth(model, data.shape[0],
+                                                                                         parent_nodes, leaf_nodes)
 
             if d == self.D:
                 global_status = status
@@ -99,6 +108,62 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
     @abstractmethod
     def generate_model(self, data: pd.DataFrame, parent_nodes: list, leaf_nodes: list, warm_start_params: dict = None):
         """Generate the corresponding model instance"""
+        pass
+
+    def _get_cart_params(self, data: pd.DataFrame, depth: int):
+        cart_model = DecisionTreeClassifier(max_depth=depth, min_samples_leaf=self.Nmin)
+        clf = cart_model.fit(data[self.P_range].values.tolist(), data[[self.y_col]].values.tolist())
+        members = getmembers(clf.tree_)
+        members_dict = {m[0]: m[1] for m in members}
+        self.K_range = sorted(list(set(data[self.y_col])))
+        cart_params = self._convert_skcart_to_params(members_dict)
+
+        parent_nodes, leaf_nodes = self.generate_nodes(depth)
+        z = {(i, t): 0 for i in range(0, data.shape[0]) for t in leaf_nodes}
+        for i in range(data.shape[0]):
+            xi = np.array([data.ix[i, j] for j in self.P_range])
+            node = 1
+            current_depth = 0
+            while current_depth < depth:
+                current_b = xi.dot(np.array([cart_params["a"][j, node] for j in self.P_range]))
+                if current_b < cart_params["bt"][node]:
+                    node = 2 * node
+                else:
+                    node = 2 * node + 1
+                current_depth += 1
+                z[i, node] = 1
+        cart_params["z"] = z
+
+        return cart_params
+
+    @abstractmethod
+    def _convert_skcart_to_params(self, clf):
+        pass
+
+    def _select_better_warm_start_params(self, params_list: list, data: pd.DataFrame):
+        params_list = [p for p in params_list if p is not None]
+        if len(params_list) == 0:
+            return None
+
+        n = data.shape[0]
+        label = data[[self.y_col]].copy()
+        label["__value__"] = 1
+        L_hat = max(label.groupby(by=self.y_col).sum()["__value__"]) / n
+
+        best_params = None
+        current_loss = np.inf
+        for i, params in enumerate(params_list):
+            loss = self._get_solution_loss(params, L_hat)
+            logging.info("Loss of the {0}th warmstart solution is: {1}. The current best loss is: {2}.".format(i, loss,
+                                                                                                               current_loss))
+            if loss < current_loss:
+                current_loss = loss
+                best_params = params
+
+        return best_params
+
+    @abstractmethod
+    def _get_solution_loss(self, params, L_hat: float):
         pass
 
     @abstractmethod
@@ -181,6 +246,44 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
             return i
         else:
             return 0
+
+    @staticmethod
+    def convert_to_complete_tree(incomplete_tree: dict):
+        children_left = incomplete_tree["children_left"]
+        children_right = incomplete_tree["children_right"]
+        depth = incomplete_tree["max_depth"]
+
+        mapping = {1: 0}
+        for t in range(2, 2 ** (depth + 1)):
+            parent_of_t = int(t / 2)
+            parent_in_original_tree = mapping[parent_of_t]
+            is_left_child = t % 2 == 0
+
+            if is_left_child:
+                node_in_original_tree = children_left[parent_in_original_tree]
+            else:
+                node_in_original_tree = children_right[parent_in_original_tree]
+            mapping[t] = node_in_original_tree
+
+        return mapping
+
+    @staticmethod
+    def get_leaf_mapping(tree_nodes_mapping: dict):
+        number_nodes = len(tree_nodes_mapping)
+        depth = int(np.log2(number_nodes + 1) - 1)
+        nodes = list(range(1, number_nodes + 1))
+        leaf_nodes = nodes[-2 ** depth:]
+        leaf_nodes_mapping = {}
+        for t in leaf_nodes:
+            tt = t
+            while tt >= 1:
+                original_t = tree_nodes_mapping[tt]
+                if original_t != -1:
+                    leaf_nodes_mapping[t] = original_t
+                    break
+                else:
+                    tt = int(tt / 2)
+        return leaf_nodes_mapping
 
 
 class OptimalTreeModel(AbstractOptimalTreeModel):
@@ -323,6 +426,62 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
         ret_b_2 = {t: 0 for t in leaf_nodes}
         ret["bt"] = {**ret_b_1, **ret_b_2}
         return ret
+
+    def _convert_skcart_to_params(self, members: dict):
+        complete_incomplete_nodes_mapping = self.convert_to_complete_tree(members)
+        leaf_nodes_mapping = self.get_leaf_mapping(complete_incomplete_nodes_mapping)
+        D = members["max_depth"]
+        ret = {}
+        parent_nodes, leaf_nodes = self.generate_nodes(D)
+
+        ret["l"] = {t: self.extract_solution_l(complete_incomplete_nodes_mapping, t) for t in leaf_nodes}
+        ret_c_helper = {t: [1 if s else 0 for s in np.array(members["value"][leaf_nodes_mapping[t]][0]) == max(
+            members["value"][leaf_nodes_mapping[t]][0])] for t in leaf_nodes}
+        ret["c"] = {(k, t): ret_c_helper[t][kk] for kk, k in enumerate(self.K_range) for t in leaf_nodes}
+        ret["d"] = {t: 1 if (complete_incomplete_nodes_mapping[t] != -1 and
+                             members["children_left"][complete_incomplete_nodes_mapping[t]] != -1 and
+                             members["children_right"][complete_incomplete_nodes_mapping[t]] != -1) else 0
+                    for t in parent_nodes}
+        ret["a"] = {(j, t): self.extract_solution_a(members, complete_incomplete_nodes_mapping, j, t) for j in
+                    self.P_range
+                    for t in parent_nodes}
+        ret["Nt"] = {t: members["n_node_samples"][leaf_nodes_mapping[t]] for t in leaf_nodes}
+        ret["Nkt"] = {(k, t): members["value"][leaf_nodes_mapping[t]][0][kk] for kk, k in enumerate(self.K_range) for t
+                      in leaf_nodes}
+        ret["Lt"] = {t: sum(
+            [i for i in members["value"][leaf_nodes_mapping[t]][0] if
+             i != max(members["value"][leaf_nodes_mapping[t]][0])])
+            for t in leaf_nodes}
+        ret["bt"] = {t: 0 if members["threshold"][complete_incomplete_nodes_mapping[t]] <= 0 else
+        members["threshold"][complete_incomplete_nodes_mapping[t]] for t in parent_nodes}
+
+        return ret
+
+    def _get_solution_loss(self, params: dict, L_hat: float):
+        return sum(params["Lt"].values()) / L_hat + self.alpha * sum(params["d"].values())
+
+    def extract_solution_a(self, members: dict, nodes_mapping: dict, j: str, t: int):
+        if nodes_mapping[t] == -1:
+            return 0
+
+        feature = members["feature"][nodes_mapping[t]]
+        if feature < 0:
+            return 0
+
+        if self.P_range[feature] == j:
+            return 1
+        else:
+            return 0
+
+    @staticmethod
+    def extract_solution_l(nodes_mapping: dict, t: int):
+        if nodes_mapping[t] > -1:
+            return 1
+
+        if t % 2 == 0:
+            return 0
+        else:
+            return 1
 
 
 class OptimalHyperTreeModel(AbstractOptimalTreeModel):
@@ -505,6 +664,53 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         ret_a_hat_jt_2 = {(j, t): 0 for j in self.P_range for t in parent_nodes}
         ret["a_hat_jt"] = {**ret_a_hat_jt_1, **ret_a_hat_jt_2}
         return ret
+
+    def _convert_skcart_to_params(self, members: dict):
+        complete_incomplete_nodes_mapping = self.convert_to_complete_tree(members)
+        leaf_nodes_mapping = self.get_leaf_mapping(complete_incomplete_nodes_mapping)
+        D = members["max_depth"]
+        ret = {}
+        parent_nodes, leaf_nodes = self.generate_nodes(D)
+
+        ret["l"] = {t: OptimalTreeModel.extract_solution_l(complete_incomplete_nodes_mapping, t) for t in leaf_nodes}
+        ret_c_helper = {t: [1 if s else 0 for s in np.array(members["value"][leaf_nodes_mapping[t]][0]) == max(
+            members["value"][leaf_nodes_mapping[t]][0])] for t in leaf_nodes}
+        ret["c"] = {(k, t): ret_c_helper[t][kk] for kk, k in enumerate(self.K_range) for t in leaf_nodes}
+        ret["d"] = {t: 1 if (complete_incomplete_nodes_mapping[t] != -1 and
+                             members["children_left"][complete_incomplete_nodes_mapping[t]] != -1) else 0
+                    for t in parent_nodes}
+        ret["s"] = {(j, t): self.extract_solution_s(members, complete_incomplete_nodes_mapping, j, t) for j in
+                    self.P_range
+                    for t in parent_nodes}
+        ret["Nt"] = {t: members["n_node_samples"][leaf_nodes_mapping[t]] for t in leaf_nodes}
+        ret["Nkt"] = {(k, t): members["value"][leaf_nodes_mapping[t]][0][kk] for kk, k in enumerate(self.K_range) for t
+                      in leaf_nodes}
+        ret["Lt"] = {t: sum(
+            [i for i in members["value"][leaf_nodes_mapping[t]][0] if
+             i != max(members["value"][leaf_nodes_mapping[t]][0])])
+            for t in leaf_nodes}
+        ret["a"] = ret["s"]
+        ret["a_hat_jt"] = ret["s"]
+        ret["bt"] = {t: 0 if members["threshold"][complete_incomplete_nodes_mapping[t]] <= 0 else
+        members["threshold"][complete_incomplete_nodes_mapping[t]] for t in parent_nodes}
+
+        return ret
+
+    def _get_solution_loss(self, params: dict, L_hat: float):
+        return sum(params["Lt"].values()) / L_hat + self.alpha * sum(params["s"].values())
+
+    def extract_solution_s(self, members: dict, nodes_mapping: dict, j: str, t: int):
+        if nodes_mapping[t] == -1:
+            return 0
+
+        feature = members["feature"][nodes_mapping[t]]
+        if feature < 0:
+            return 0
+
+        if self.P_range[feature] == j:
+            return 1
+        else:
+            return 0
 
 
 if __name__ == "__main__":
