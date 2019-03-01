@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO,
 
 class AbstractOptimalTreeModel(metaclass=ABCMeta):
     def __init__(self, x_cols: list, y_col: str, tree_depth: int, N_min: int, alpha: float = 0.01,
-                 M: int = 1e6, epsilon: float = 1e-4,
+                 M: int = 1e6, epsilon: float = 1e-5,
                  solver_name: str = "cplex"):
         self.y_col = y_col
         self.P = len(x_cols)
@@ -73,10 +73,8 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
             else:
                 logging.info("Optimizing the tree with depth {0}...".format(self.D))
 
-            warm_start_params = None
-            if warm_start:
-                cart_params = self._get_cart_params(data, d)
-                warm_start_params = self._select_better_warm_start_params([previous_depth_params, cart_params], data)
+            cart_params = self._get_cart_params(data, d)
+            warm_start_params = self._select_better_warm_start_params([previous_depth_params, cart_params], data)
 
             parent_nodes, leaf_nodes = self.generate_nodes(d)
             model = self.generate_model(data, parent_nodes, leaf_nodes, warm_start_params)
@@ -120,6 +118,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
 
         parent_nodes, leaf_nodes = self.generate_nodes(depth)
         z = {(i, t): 0 for i in range(0, data.shape[0]) for t in leaf_nodes}
+        epsilon = self.epsilon
         for i in range(data.shape[0]):
             xi = np.array([data.ix[i, j] for j in self.P_range])
             node = 1
@@ -127,13 +126,17 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
             while current_depth < depth:
                 current_b = xi.dot(np.array([cart_params["a"][j, node] for j in self.P_range]))
                 if current_b < cart_params["bt"][node]:
+                    epsilon = epsilon if cart_params["bt"][node] - current_b > epsilon else cart_params["bt"][
+                                                                                                node] - current_b
                     node = 2 * node
                 else:
                     node = 2 * node + 1
                 current_depth += 1
-                z[i, node] = 1
-        cart_params["z"] = z
+                if current_depth == depth:
+                    z[i, node] = 1
 
+        self.epsilon = epsilon
+        cart_params["z"] = z
         return cart_params
 
     @abstractmethod
@@ -445,6 +448,7 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
         ret["a"] = {(j, t): self.extract_solution_a(members, complete_incomplete_nodes_mapping, j, t) for j in
                     self.P_range
                     for t in parent_nodes}
+        # Nt and Nkt can be calculated given cjt, do i still need to provide them to CPLEX?
         ret["Nt"] = {t: members["n_node_samples"][leaf_nodes_mapping[t]] for t in leaf_nodes}
         ret["Nkt"] = {(k, t): members["value"][leaf_nodes_mapping[t]][0][kk] for kk, k in enumerate(self.K_range) for t
                       in leaf_nodes}
