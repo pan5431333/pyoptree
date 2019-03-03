@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO,
 
 class AbstractOptimalTreeModel(metaclass=ABCMeta):
     def __init__(self, x_cols: list, y_col: str, tree_depth: int, N_min: int, alpha: float = 0.01,
-                 M: int = 1e6, epsilon: float = 1e-5,
+                 M: int = 1e2, epsilon: float = 1e-5,
                  solver_name: str = "cplex"):
         self.y_col = y_col
         self.P = len(x_cols)
@@ -79,12 +79,18 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
             parent_nodes, leaf_nodes = self.generate_nodes(d)
             model = self.generate_model(data, parent_nodes, leaf_nodes, warm_start_params)
 
+            # model.pprint()
+
             res = solver.solve(model, tee=show_training_process, warmstart=True)
             status = str(res.solver.termination_condition)
             loss = value(model.obj)
 
             previous_depth_params = self._generate_warm_start_params_from_previous_depth(model, data.shape[0],
                                                                                          parent_nodes, leaf_nodes)
+
+            logging.debug("Previous solution: ")
+            for k in previous_depth_params:
+                logging.debug("{0}: {1}".format(k, previous_depth_params[k]))
 
             if d == self.D:
                 global_status = status
@@ -113,6 +119,10 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         clf = cart_model.fit(data[self.P_range].values.tolist(), data[[self.y_col]].values.tolist())
         members = getmembers(clf.tree_)
         members_dict = {m[0]: m[1] for m in members}
+
+        if members_dict["max_depth"] < depth:
+            return None
+
         self.K_range = sorted(list(set(data[self.y_col])))
         cart_params = self._convert_skcart_to_params(members_dict)
 
@@ -125,7 +135,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
             current_depth = 0
             while current_depth < depth:
                 current_b = xi.dot(np.array([cart_params["a"][j, node] for j in self.P_range]))
-                if current_b < cart_params["bt"][node]:
+                if current_b + self.epsilon <= cart_params["bt"][node]:
                     epsilon = epsilon if cart_params["bt"][node] - current_b > epsilon else cart_params["bt"][
                                                                                                 node] - current_b
                     node = 2 * node
@@ -135,12 +145,18 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
                 if current_depth == depth:
                     z[i, node] = 1
 
+        logging.info("Modified epsilon is: {0}".format(self.epsilon))
         self.epsilon = epsilon
         cart_params["z"] = z
+
+        logging.debug("Cart solution: ")
+        for k in cart_params:
+            logging.debug("{0}: {1}".format(k, cart_params[k]))
+
         return cart_params
 
     @abstractmethod
-    def _convert_skcart_to_params(self, clf):
+    def _convert_skcart_to_params(self, clf: dict):
         pass
 
     def _select_better_warm_start_params(self, params_list: list, data: pd.DataFrame):
@@ -238,7 +254,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
 
     @staticmethod
     def generate_nodes(tree_depth: int):
-        nodes = list(range(1, int(2 ** (tree_depth + 1))))
+        nodes = list(range(1, int(round(2 ** (tree_depth + 1)))))
         parent_nodes = nodes[0: 2 ** (tree_depth + 1) - 2 ** tree_depth - 1]
         leaf_ndoes = nodes[-2 ** tree_depth:]
         return parent_nodes, leaf_ndoes
@@ -273,7 +289,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
     @staticmethod
     def get_leaf_mapping(tree_nodes_mapping: dict):
         number_nodes = len(tree_nodes_mapping)
-        depth = int(np.log2(number_nodes + 1) - 1)
+        depth = int(round(np.log2(number_nodes + 1) - 1))
         nodes = list(range(1, number_nodes + 1))
         leaf_nodes = nodes[-2 ** depth:]
         leaf_nodes_mapping = {}
@@ -406,19 +422,19 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
     def _generate_warm_start_params_from_previous_depth(self, model, n_training_data: int,
                                                         parent_nodes: list, leaf_nodes: list):
         ret = {}
-        D = int(np.log2(len(leaf_nodes))) + 1
+        D = int(round(np.log2(len(leaf_nodes))) + 1)
         new_parent_nodes, new_leaf_nodes = self.generate_nodes(D)
         n_range = range(n_training_data)
 
-        ret["z"] = {(i, t): int(value(model.z[i, int(t / 2)])) if t % 2 == 1 else 0 for i in n_range for t in
+        ret["z"] = {(i, t): round(value(model.z[i, int(t / 2)])) if t % 2 == 1 else 0 for i in n_range for t in
                     new_leaf_nodes}
-        ret["l"] = {t: int(value(model.l[int(t / 2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
-        ret["c"] = {(k, t): int(value(model.c[k, int(t / 2)])) if t % 2 == 1 else 0 for k in self.K_range for t in
+        ret["l"] = {t: round(value(model.l[int(t / 2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret["c"] = {(k, t): round(value(model.c[k, int(t / 2)])) if t % 2 == 1 else 0 for k in self.K_range for t in
                     new_leaf_nodes}
-        ret_d_1 = {t: int(value(model.d[t])) for t in parent_nodes}
+        ret_d_1 = {t: round(value(model.d[t])) for t in parent_nodes}
         ret_d_2 = {t: 0 for t in leaf_nodes}
         ret["d"] = {**ret_d_1, **ret_d_2}
-        ret_a_1 = {(j, t): int(value(model.a[j, t])) for j in self.P_range for t in parent_nodes}
+        ret_a_1 = {(j, t): round(value(model.a[j, t])) for j in self.P_range for t in parent_nodes}
         ret_a_2 = {(j, t): 0 for j in self.P_range for t in leaf_nodes}
         ret["a"] = {**ret_a_1, **ret_a_2}
         ret["Nt"] = {t: self.positive_or_zero(value(model.Nt[int(t / 2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
@@ -434,27 +450,26 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
         complete_incomplete_nodes_mapping = self.convert_to_complete_tree(members)
         leaf_nodes_mapping = self.get_leaf_mapping(complete_incomplete_nodes_mapping)
         D = members["max_depth"]
+
         ret = {}
         parent_nodes, leaf_nodes = self.generate_nodes(D)
 
         ret["l"] = {t: self.extract_solution_l(complete_incomplete_nodes_mapping, t) for t in leaf_nodes}
-        ret_c_helper = {t: [1 if s else 0 for s in np.array(members["value"][leaf_nodes_mapping[t]][0]) == max(
-            members["value"][leaf_nodes_mapping[t]][0])] for t in leaf_nodes}
+        ret_c_helper = {t: self.extract_solution_c(self.K_range, members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+                        for t in leaf_nodes}
         ret["c"] = {(k, t): ret_c_helper[t][kk] for kk, k in enumerate(self.K_range) for t in leaf_nodes}
+
         ret["d"] = {t: 1 if (complete_incomplete_nodes_mapping[t] != -1 and
                              members["children_left"][complete_incomplete_nodes_mapping[t]] != -1 and
                              members["children_right"][complete_incomplete_nodes_mapping[t]] != -1) else 0
                     for t in parent_nodes}
         ret["a"] = {(j, t): self.extract_solution_a(members, complete_incomplete_nodes_mapping, j, t) for j in
-                    self.P_range
-                    for t in parent_nodes}
-        # Nt and Nkt can be calculated given cjt, do i still need to provide them to CPLEX?
-        ret["Nt"] = {t: members["n_node_samples"][leaf_nodes_mapping[t]] for t in leaf_nodes}
-        ret["Nkt"] = {(k, t): members["value"][leaf_nodes_mapping[t]][0][kk] for kk, k in enumerate(self.K_range) for t
-                      in leaf_nodes}
-        ret["Lt"] = {t: sum(
-            [i for i in members["value"][leaf_nodes_mapping[t]][0] if
-             i != max(members["value"][leaf_nodes_mapping[t]][0])])
+                    self.P_range for t in parent_nodes}
+        ret["Nt"] = {t: self.extract_solution_Nt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping) for
+                     t in leaf_nodes}
+        ret["Nkt"] = {(k, t): self.extract_solution_Nkt(members, t, kk, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+                      for kk, k in enumerate(self.K_range) for t in leaf_nodes}
+        ret["Lt"] = {t: OptimalTreeModel.extract_solution_Lt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
             for t in leaf_nodes}
         ret["bt"] = {t: 0 if members["threshold"][complete_incomplete_nodes_mapping[t]] <= 0 else
         members["threshold"][complete_incomplete_nodes_mapping[t]] for t in parent_nodes}
@@ -479,13 +494,132 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
 
     @staticmethod
     def extract_solution_l(nodes_mapping: dict, t: int):
-        if nodes_mapping[t] > -1:
+        if nodes_mapping[t] >= 0:
             return 1
 
-        if t % 2 == 0:
-            return 0
+        p = t
+        while p > 1:
+            pp = int(p / 2)
+            if nodes_mapping[pp] >= 0:
+                if p % 2 == 1:
+                    return 1
+                else:
+                    return 0
+            else:
+                if p % 2 == 1:
+                    p = pp
+                else:
+                    return 0
+
+    @staticmethod
+    def extract_solution_c(K_range, members: dict, t: int, nodes_mapping: dict, leaf_nodes_mapping: dict):
+        samples_count_in_the_node = np.array(members["value"][leaf_nodes_mapping[t]][0])
+        max_class = max(samples_count_in_the_node)
+
+        ret = []
+        for s in samples_count_in_the_node:
+            if s == max_class:
+                ret.append(1)
+                max_class += 1
+            else:
+                ret.append(0)
+
+        if nodes_mapping[t] >= 0:
+            return ret
+
+        p = t
+        while p > 1:
+            pp = int(p / 2)
+            if nodes_mapping[pp] >= 0:
+                if p % 2 == 1:
+                    return ret
+                else:
+                    return [0 for i in K_range]
+            else:
+                if p % 2 == 1:
+                    p = pp
+                else:
+                    return [0 for i in K_range]
+
+    @staticmethod
+    def extract_solution_Nt(members: dict, t: int, nodes_mapping: dict, leaf_nodes_mapping: dict):
+        if nodes_mapping[t] >= 0:
+            return members["n_node_samples"][nodes_mapping[t]]
+
+        p = t
+        while p > 1:
+            pp = int(p / 2)
+            if nodes_mapping[pp] >= 0:
+                if p % 2 == 1:
+                    return members["n_node_samples"][leaf_nodes_mapping[t]]
+                else:
+                    return 0
+            else:
+                if p % 2 == 1:
+                    p = pp
+                else:
+                    return 0
+
+    @staticmethod
+    def extract_solution_Nkt(members: dict, t: int, kk: int, nodes_mapping: dict, leaf_nodes_mapping: dict):
+        if nodes_mapping[t] >= 0:
+            return members["value"][nodes_mapping[t]][0][kk]
+
+        p = t
+        while p > 1:
+            pp = int(p / 2)
+            if nodes_mapping[pp] >= 0:
+                if p % 2 == 1:
+                    return members["value"][leaf_nodes_mapping[t]][0][kk]
+                else:
+                    return 0
+            else:
+                if p % 2 == 1:
+                    p = pp
+                else:
+                    return 0
+
+    @staticmethod
+    def extract_solution_Lt(members: dict, t, nodes_mapping: dict, leaf_nodes_mapping: dict):
+        samples_count_in_the_node = np.array(members["value"][leaf_nodes_mapping[t]][0])
+        max_class = max(samples_count_in_the_node)
+
+        n_max_count = 0
+        for c in samples_count_in_the_node:
+            if c == max_class:
+                n_max_count += 1
+
+        if n_max_count == 1:
+            ret = sum([s for s in samples_count_in_the_node if s != max_class])
         else:
-            return 1
+            ret = sum([s for s in samples_count_in_the_node if s != max_class]) + max_class
+
+        if nodes_mapping[t] >= 0:
+            return ret
+
+        p = t
+        while p > 1:
+            pp = int(p / 2)
+            if nodes_mapping[pp] >= 0:
+                if p % 2 == 1:
+                    return ret
+                else:
+                    return 0
+            else:
+                if p % 2 == 1:
+                    p = pp
+                else:
+                    return 0
+
+    @staticmethod
+    def extract_solution_bt(members: dict, t: int, nodes_mapping: dict):
+        original_node = nodes_mapping[t]
+        children_left = members["children_left"]
+
+        if original_node == -1 or children_left[original_node] == -1:
+            return 0
+
+        return abs(members["threshold"][original_node])
 
 
 class OptimalHyperTreeModel(AbstractOptimalTreeModel):
@@ -638,19 +772,19 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
     def _generate_warm_start_params_from_previous_depth(self, model, n_training_data: int,
                                                         parent_nodes: list, leaf_nodes: list):
         ret = {}
-        D = int(np.log2(len(leaf_nodes))) + 1
+        D = int(round(np.log2(len(leaf_nodes))) + 1)
         new_parent_nodes, new_leaf_nodes = self.generate_nodes(D)
         n_range = range(n_training_data)
 
-        ret["z"] = {(i, t): int(value(model.z[i, int(t / 2)])) if t % 2 == 1 else 0 for i in n_range for t in
+        ret["z"] = {(i, t): round(value(model.z[i, int(t / 2)])) if t % 2 == 1 else 0 for i in n_range for t in
                     new_leaf_nodes}
-        ret["l"] = {t: int(value(model.l[int(t / 2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
-        ret["c"] = {(k, t): int(value(model.c[k, int(t / 2)])) if t % 2 == 1 else 0 for k in self.K_range for t in
+        ret["l"] = {t: round(value(model.l[int(t / 2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
+        ret["c"] = {(k, t): round(value(model.c[k, int(t / 2)])) if t % 2 == 1 else 0 for k in self.K_range for t in
                     new_leaf_nodes}
-        ret_d_1 = {t: int(value(model.d[t])) for t in parent_nodes}
+        ret_d_1 = {t: round(value(model.d[t])) for t in parent_nodes}
         ret_d_2 = {t: 0 for t in leaf_nodes}
         ret["d"] = {**ret_d_1, **ret_d_2}
-        ret_s_1 = {(j, t): int(value(model.s[j, t])) for j in self.P_range for t in parent_nodes}
+        ret_s_1 = {(j, t): round(value(model.s[j, t])) for j in self.P_range for t in parent_nodes}
         ret_s_2 = {(j, t): 0 for j in self.P_range for t in leaf_nodes}
         ret["s"] = {**ret_s_1, **ret_s_2}
         ret["Nt"] = {t: self.positive_or_zero(value(model.Nt[int(t / 2)])) if t % 2 == 1 else 0 for t in new_leaf_nodes}
@@ -673,30 +807,33 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         complete_incomplete_nodes_mapping = self.convert_to_complete_tree(members)
         leaf_nodes_mapping = self.get_leaf_mapping(complete_incomplete_nodes_mapping)
         D = members["max_depth"]
+
+        logging.debug("Children left of cart: {0}".format(members["children_left"]))
+        logging.debug("Children right of cart: {0}".format(members["children_right"]))
+
         ret = {}
         parent_nodes, leaf_nodes = self.generate_nodes(D)
 
         ret["l"] = {t: OptimalTreeModel.extract_solution_l(complete_incomplete_nodes_mapping, t) for t in leaf_nodes}
-        ret_c_helper = {t: [1 if s else 0 for s in np.array(members["value"][leaf_nodes_mapping[t]][0]) == max(
-            members["value"][leaf_nodes_mapping[t]][0])] for t in leaf_nodes}
+        ret_c_helper = {t: OptimalTreeModel.extract_solution_c(self.K_range, members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+                        for t in leaf_nodes}
         ret["c"] = {(k, t): ret_c_helper[t][kk] for kk, k in enumerate(self.K_range) for t in leaf_nodes}
-        ret["d"] = {t: 1 if (complete_incomplete_nodes_mapping[t] != -1 and
-                             members["children_left"][complete_incomplete_nodes_mapping[t]] != -1) else 0
+
+        ret["d"] = {t: 1 if (complete_incomplete_nodes_mapping[t] >= 0 and
+                             members["children_left"][complete_incomplete_nodes_mapping[t]] >= 0) else 0
                     for t in parent_nodes}
         ret["s"] = {(j, t): self.extract_solution_s(members, complete_incomplete_nodes_mapping, j, t) for j in
                     self.P_range
                     for t in parent_nodes}
-        ret["Nt"] = {t: members["n_node_samples"][leaf_nodes_mapping[t]] for t in leaf_nodes}
-        ret["Nkt"] = {(k, t): members["value"][leaf_nodes_mapping[t]][0][kk] for kk, k in enumerate(self.K_range) for t
-                      in leaf_nodes}
-        ret["Lt"] = {t: sum(
-            [i for i in members["value"][leaf_nodes_mapping[t]][0] if
-             i != max(members["value"][leaf_nodes_mapping[t]][0])])
+        ret["Nt"] = {t: OptimalTreeModel.extract_solution_Nt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping) for
+                     t in leaf_nodes}
+        ret["Nkt"] = {(k, t): OptimalTreeModel.extract_solution_Nkt(members, t, kk, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+                      for kk, k in enumerate(self.K_range) for t in leaf_nodes}
+        ret["Lt"] = {t: OptimalTreeModel.extract_solution_Lt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
             for t in leaf_nodes}
         ret["a"] = ret["s"]
         ret["a_hat_jt"] = ret["s"]
-        ret["bt"] = {t: 0 if members["threshold"][complete_incomplete_nodes_mapping[t]] <= 0 else
-        members["threshold"][complete_incomplete_nodes_mapping[t]] for t in parent_nodes}
+        ret["bt"] = {t: OptimalTreeModel.extract_solution_bt(members, t, complete_incomplete_nodes_mapping) for t in parent_nodes}
 
         return ret
 
@@ -704,7 +841,9 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         return sum(params["Lt"].values()) / L_hat + self.alpha * sum(params["s"].values())
 
     def extract_solution_s(self, members: dict, nodes_mapping: dict, j: str, t: int):
-        if nodes_mapping[t] == -1:
+        children_left = members["children_left"]
+
+        if nodes_mapping[t] == -1 or children_left[nodes_mapping[t]] < 0:
             return 0
 
         feature = members["feature"][nodes_mapping[t]]
