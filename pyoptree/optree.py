@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO,
 
 class AbstractOptimalTreeModel(metaclass=ABCMeta):
     def __init__(self, x_cols: list, y_col: str, tree_depth: int, N_min: int, alpha: float = 0.01,
-                 M: int = 1e2, epsilon: float = 1e-5,
+                 M: int = 1e2, epsilon: float = 1e-4,
                  solver_name: str = "cplex"):
         self.y_col = y_col
         self.P = len(x_cols)
@@ -158,6 +158,16 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
     @abstractmethod
     def _convert_skcart_to_params(self, clf: dict):
         pass
+
+    def pprint(self):
+        logging.info("l: {0}".format(self.l))
+        logging.info("c: {0}".format(self.c))
+        logging.info("d: {0}".format(self.d))
+        logging.info("a: {0}".format(self.a))
+        logging.info("b: {0}".format(self.b))
+        logging.info("Lt: {0}".format(self.Lt))
+        logging.info("Nkt: {0}".format(self.Nkt))
+        logging.info("Nt: {0}".format(self.Nt))
 
     def _select_better_warm_start_params(self, params_list: list, data: pd.DataFrame):
         params_list = [p for p in params_list if p is not None]
@@ -758,7 +768,7 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         # Objective
         model.obj = Objective(
             expr=sum([model.Lt[t] for t in leaf_ndoes]) / L_hat + sum(
-                [model.s[j, t] for j in P_range for t in parent_nodes]) * self.alpha
+                [model.a_hat_jt[j, t] for j in P_range for t in parent_nodes]) * self.alpha
         )
 
         return model
