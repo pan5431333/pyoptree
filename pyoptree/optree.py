@@ -17,9 +17,9 @@ logging.basicConfig(level=logging.INFO,
 
 
 class AbstractOptimalTreeModel(metaclass=ABCMeta):
-    def __init__(self, x_cols: list, y_col: str, tree_depth: int, N_min: int, alpha: float = 0.01,
+    def __init__(self, x_cols: list, y_col: str, tree_depth: int, N_min: int, alpha: float = 0,
                  M: int = 1e2, epsilon: float = 1e-4,
-                 solver_name: str = "cplex"):
+                 solver_name: str = "gurobi"):
         self.y_col = y_col
         self.P = len(x_cols)
         self.P_range = x_cols
