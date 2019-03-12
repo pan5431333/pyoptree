@@ -807,10 +807,7 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         ret_b_1 = {t: value(model.bt[t]) for t in parent_nodes}
         ret_b_2 = {t: 0 for t in leaf_nodes}
         ret["bt"] = {**ret_b_1, **ret_b_2}
-        ret_a_hat_jt_1 = {(j, t): self.positive_or_zero(value(model.a_hat_jt[j, t])) for j in self.P_range for t in
-                          parent_nodes}
-        ret_a_hat_jt_2 = {(j, t): 0 for j in self.P_range for t in parent_nodes}
-        ret["a_hat_jt"] = {**ret_a_hat_jt_1, **ret_a_hat_jt_2}
+        ret["a_hat_jt"] = {(j, t): abs(ret["a"][j, t]) for (j, t) in ret["a"]}
         return ret
 
     def _convert_skcart_to_params(self, members: dict):
@@ -848,7 +845,7 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         return ret
 
     def _get_solution_loss(self, params: dict, L_hat: float):
-        return sum(params["Lt"].values()) / L_hat + self.alpha * sum(params["s"].values())
+        return sum(params["Lt"].values()) / L_hat + self.alpha * sum(params["a_hat_jt"].values())
 
     def extract_solution_s(self, members: dict, nodes_mapping: dict, j: str, t: int):
         children_left = members["children_left"]
