@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO,
 
 class AbstractOptimalTreeModel(metaclass=ABCMeta):
     def __init__(self, x_cols: list, y_col: str, tree_depth: int, N_min: int, alpha: float = 0,
-                 M: int = 1e2, epsilon: float = 1e-4,
+                 M: int = 10, epsilon: float = 1e-4,
                  solver_name: str = "gurobi"):
         self.y_col = y_col
         self.P = len(x_cols)
@@ -404,14 +404,14 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
                 for m in right_ancestors:
                     model.parent_branching_constraints.add(
                         expr=sum([model.a[j, m] * data.loc[i, j] for j in P_range]) >= model.bt[m] - (1 - model.z[
-                            i, t]) * self.M
+                            i, t])
                     )
                 for m in left_ancestors:
                     model.parent_branching_constraints.add(
                         expr=sum([model.a[j, m] * data.loc[i, j] for j in P_range]) + self.epsilon <= model.bt[m] + (1 -
                                                                                                                      model.z[
                                                                                                                          i, t]) * (
-                                                                                                                        self.M + self.epsilon)
+                                                                                                                        1 + self.epsilon)
                     )
         for t in parent_nodes:
             model.parent_branching_constraints.add(
