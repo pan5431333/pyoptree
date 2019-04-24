@@ -7,6 +7,7 @@ import logging
 class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
     def __init__(self, Nmin: int):
         self.Nmin = Nmin
+        self.sorted_x = None
 
     @staticmethod
     def shuffle(index_set: list):
@@ -14,7 +15,17 @@ class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
         np.random.shuffle(index_set_bk)
         return index_set_bk
 
+    @staticmethod
+    def sort_x(x):
+        res = []
+        for j in range(x.shape[1]):
+            xj = x[::, j]
+            res.append(sorted(xj))
+        res = np.array(res)
+        return res.T
+
     def local_search(self, tree: Tree, x, y):
+        self.sorted_x = self.sort_x(x)
         tree = tree.copy()
         error_previous = tree.loss(x, y)
         error_current = np.inf
@@ -23,13 +34,13 @@ class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
         i = 1
         while True:
             for t in AbstractOptimalTreeModelOptimizer.shuffle(tree.get_parent_nodes()):
-                logging.info("Visiting node {0}...".format(t))
                 subtree = tree.subtree(t)
                 res = tree.evaluate(x)
                 L = []
                 for tt in subtree.get_leaf_nodes():
                     L.extend(res[tt])
                 if len(L) > 0:
+                    logging.info("Visiting node {0}, there are {1} data points in this subtree.".format(t, len(L)))
                     logging.info("Training in {0}th iteration...".format(i))
                     i += 1
                     new_subtree = self.optimize_node_parallel(subtree, x, y, L)
@@ -59,14 +70,6 @@ class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
         logging.debug("Current best error of the subtree: {0}".format(error_best))
 
         updated = False
-        para_tree, error_para = self.best_split(lower_tree, upper_tree, sub_x, sub_y)
-        error_para = para_tree.loss(sub_x, sub_y)
-        if error_para < error_best:
-            logging.info("Updating by parallel split")
-            new_sub_tree.a[new_sub_tree.root_node] = para_tree.a[para_tree.root_node]
-            new_sub_tree.b[new_sub_tree.root_node] = para_tree.b[para_tree.root_node]
-            error_best = error_para
-            updated = True
 
         error_lower = lower_tree.loss(sub_x, sub_y)
         if error_lower < error_best and lower_tree.depth > 0:
@@ -75,6 +78,7 @@ class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
             new_sub_tree.b[new_sub_tree.root_node] = 1
             error_best = error_lower
             updated = True
+            return new_sub_tree
 
         error_upper = upper_tree.loss(sub_x, sub_y)
         if error_upper < error_best and upper_tree.depth > 0:
@@ -83,6 +87,16 @@ class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
             new_sub_tree.b[new_sub_tree.root_node] = 0
             error_best = error_upper
             updated = True
+            return new_sub_tree
+
+        para_tree, error_para = self.best_split(lower_tree, upper_tree, sub_x, sub_y, L)
+        error_para = para_tree.loss(sub_x, sub_y)
+        if error_para < error_best:
+            logging.info("Updating by parallel split")
+            new_sub_tree.a[new_sub_tree.root_node] = para_tree.a[para_tree.root_node]
+            new_sub_tree.b[new_sub_tree.root_node] = para_tree.b[para_tree.root_node]
+            error_best = error_para
+            updated = True
 
         if not updated:
             logging.info("No update, return the original tree")
@@ -90,12 +104,12 @@ class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
         return new_sub_tree
 
     @abstractmethod
-    def best_split(self, lower_tree: Tree, upper_tree: Tree, x, y):
+    def best_split(self, lower_tree: Tree, upper_tree: Tree, x, y, L: list):
         pass
 
 
 class OptimalTreeModelOptimizer(AbstractOptimalTreeModelOptimizer):
-    def best_split(self, lower_tree: Tree, upper_tree: Tree, x, y):
+    def best_split(self, lower_tree: Tree, upper_tree: Tree, x, y, L: list):
         assert lower_tree.root_node % 2 == 0, "Illegal lower tree! (root node: {0})".format(lower_tree.root_node)
         assert upper_tree.root_node == lower_tree.root_node + 1, "Illegal upper tree! (lower tree root node: {0}, " \
                                                                  "upper tree root node: {1})".format(
@@ -116,13 +130,12 @@ class OptimalTreeModelOptimizer(AbstractOptimalTreeModelOptimizer):
         best_tree = parent_tree.copy()
 
         logging.debug("Calculating best parallel split for {0} points with dimension {1}".format(n, p))
+        sorted_sub_x = self.sorted_x[L, ::]
         for j in range(p):
             logging.debug("Visiting {0}th dimension. Current best error of the subtree: {1}".format(j, error_best))
-            values = x[::, j]
-            values = sorted(values)
+            values = sorted_sub_x[::, j]
             for i in range(n - 1):
                 b = (values[i] + values[i + 1]) / 2
-
                 parent_tree.a[parent_node] = np.zeros(p)
                 parent_tree.a[parent_node][j] = 1
                 parent_tree.b[parent_node] = b

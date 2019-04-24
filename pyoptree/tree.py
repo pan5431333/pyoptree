@@ -107,6 +107,9 @@ class Tree(metaclass=ABCMeta):
             x.shape[0], y.shape[0]
         )
         res = self.evaluate(x)
+        return self.loss_and_min_leaf_size_helper(res, y)
+
+    def loss_and_min_leaf_size_helper(self, res: dict, y):
         predict_y = np.zeros(y.shape[0])
         predict_leaf_value = {t: 0 for t in self.get_leaf_nodes()}
         for t in res:
