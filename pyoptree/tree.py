@@ -35,7 +35,7 @@ class Tree(metaclass=ABCMeta):
         subtree_a = {}
         subtree_b = {}
         for left_node in subtree_empty.get_parent_nodes():
-            subtree_a[left_node] = self.a[left_node]
+            subtree_a[left_node] = self.a[left_node].copy()
             subtree_b[left_node] = self.b[left_node]
 
         return Tree(root_node, whole_depth - parent_depth, subtree_a, subtree_b)
@@ -125,7 +125,7 @@ class Tree(metaclass=ABCMeta):
         loss = sum([y[i] != predict_y[i] for i in range(y.shape[0])]) / y.shape[0] + self.alpha * tree_complexity
 
         leaf_samples_count = {t: len(res[t]) for t in res}
-        min_leaf_size = min(leaf_samples_count.values())
+        min_leaf_size = min([i for i in leaf_samples_count.values() if i > 0])
         return loss, min_leaf_size
 
     def generate_majority_leaf_class(self, x, y):

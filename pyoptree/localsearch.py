@@ -28,8 +28,7 @@ class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
                 res = tree.evaluate(x)
                 L = []
                 for tt in subtree.get_leaf_nodes():
-                    for ii in res[tt]:
-                        L.append(ii)
+                    L.extend(res[tt])
                 if len(L) > 0:
                     logging.info("Training in {0}th iteration...".format(i))
                     i += 1
@@ -52,14 +51,16 @@ class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
         sub_x = x[L, ::]
         sub_y = y[L]
 
-        lower_tree, upper_tree = subtree.children()
+        p = sub_x.shape[1]
+
+        lower_tree, upper_tree = new_sub_tree.children()
         error_best = new_sub_tree.loss(sub_x, sub_y)
 
         logging.debug("Current best error of the subtree: {0}".format(error_best))
 
         updated = False
-        para_tree, error_para = self.best_split(lower_tree, upper_tree, sub_x,
-                                                sub_y)
+        para_tree, error_para = self.best_split(lower_tree, upper_tree, sub_x, sub_y)
+        error_para = para_tree.loss(sub_x, sub_y)
         if error_para < error_best:
             logging.info("Updating by parallel split")
             new_sub_tree.a[new_sub_tree.root_node] = para_tree.a[para_tree.root_node]
@@ -70,16 +71,16 @@ class AbstractOptimalTreeModelOptimizer(metaclass=ABCMeta):
         error_lower = lower_tree.loss(sub_x, sub_y)
         if error_lower < error_best and lower_tree.depth > 0:
             logging.info("Updating by replacing by lower child tree")
-            new_sub_tree.a[new_sub_tree.root_node] = lower_tree.a[lower_tree.root_node]
-            new_sub_tree.b[new_sub_tree.root_node] = lower_tree.b[lower_tree.root_node]
+            new_sub_tree.a[new_sub_tree.root_node] = np.zeros(p)
+            new_sub_tree.b[new_sub_tree.root_node] = 1
             error_best = error_lower
             updated = True
 
         error_upper = upper_tree.loss(sub_x, sub_y)
         if error_upper < error_best and upper_tree.depth > 0:
             logging.info("Updating by replacing by upper child tree")
-            new_sub_tree.a[new_sub_tree.root_node] = upper_tree.a[upper_tree.root_node]
-            new_sub_tree.b[new_sub_tree.root_node] = upper_tree.b[upper_tree.root_node]
+            new_sub_tree.a[new_sub_tree.root_node] = np.zeros(p)
+            new_sub_tree.b[new_sub_tree.root_node] = 0
             error_best = error_upper
             updated = True
 
@@ -106,13 +107,13 @@ class OptimalTreeModelOptimizer(AbstractOptimalTreeModelOptimizer):
 
         n, p = x.shape
         error_best = np.inf
-        best_tree = lower_tree
 
-        parent_node = int(lower_tree.root_node / 2)
+        parent_node = int(round(lower_tree.root_node / 2))
         parent_node_a = np.zeros(p)
         parent_a = {**{parent_node: parent_node_a}, **lower_tree.a, **upper_tree.a}
         parent_b = {**{parent_node: 0}, **lower_tree.b, **upper_tree.b}
         parent_tree = Tree(parent_node, lower_tree.depth + 1, parent_a, parent_b)
+        best_tree = parent_tree.copy()
 
         logging.debug("Calculating best parallel split for {0} points with dimension {1}".format(n, p))
         for j in range(p):
@@ -131,8 +132,9 @@ class OptimalTreeModelOptimizer(AbstractOptimalTreeModelOptimizer):
 
                     if error < error_best:
                         error_best = error
-
-                        best_tree = parent_tree
+                        best_tree.a[parent_node] = np.zeros(p)
+                        best_tree.a[parent_node][j] = 1
+                        best_tree.b[parent_node] = b
 
         logging.debug("Complete calculating best parallel split")
 
