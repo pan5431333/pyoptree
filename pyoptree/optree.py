@@ -11,9 +11,9 @@ import numpy as np
 from abc import abstractmethod, ABCMeta
 from sklearn.tree import DecisionTreeClassifier
 from inspect import getmembers
-
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s', )
+from pyoptree.tree import TreeModel, WholeTree, Tree
+from pyoptree.localsearch import OptimalTreeModelOptimizer
+import multiprocessing
 
 
 class AbstractOptimalTreeModel(metaclass=ABCMeta):
@@ -49,15 +49,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         assert tree_depth > 0, "Tree depth must be greater than 0! (Actual: {0})".format(tree_depth)
 
     def train(self, data: pd.DataFrame, show_training_process: bool = True, warm_start: bool = True):
-        data = data.copy().reset_index(drop=True)
-        for col in self.P_range:
-            col_max = max(data[col])
-            col_min = min(data[col])
-            self.normalizer[col] = (col_max, col_min)
-            if col_max != col_min:
-                data[col] = (data[col] - col_min) / (col_max - col_min)
-            else:
-                data[col] = 1
+        data = self.normalize_data(data)
 
         solver = SolverFactory(self.solver_name)
         solver.options["LPMethod"] = 4
@@ -109,6 +101,55 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         logging.info("Training done. Loss: {1}. Optimization status: {0}".format(global_status, global_loss))
         logging.info("Training done(Contd.): training accuracy: {0}".format(1 - sum(self.Lt.values()) / data.shape[0]))
 
+    def normalize_data(self, data: pd.DataFrame):
+        data = data.copy().reset_index(drop=True)
+        for col in self.P_range:
+            col_max = max(data[col])
+            col_min = min(data[col])
+            self.normalizer[col] = (col_max, col_min)
+            if col_max != col_min:
+                data[col] = (data[col] - col_min) / (col_max - col_min)
+            else:
+                data[col] = 1
+        return data
+
+    def initialize_tree_for_fast_train(self, data: pd.DataFrame):
+        # Use CART as the primary initialization method. If failed, use random initialization.
+        is_cart_initialization_failed = False
+        try:
+            # Initialize by cart
+
+            # Only train CART with sqrt(P) number of features
+            P_range_bk = self.P_range
+            np.random.shuffle(self.P_range)
+            subset_features = self.P_range[0:int(np.sqrt(self.P))]
+            self.P_range = subset_features
+            subset_data = pd.concat([data.ix[::, subset_features], data.ix[::, self.y_col]], axis=1)
+            cart_params = self._get_cart_params(subset_data, self.D)
+            self.P_range = P_range_bk
+            cart_a = {}
+            for t in self.parent_nodes:
+                at = []
+                for j in self.P_range:
+                    if j in subset_features:
+                        at.append(cart_params["a"][j, t])
+                    else:
+                        at.append(0)
+                cart_a[t] = np.array(at)
+            cart_b = {t: cart_params["bt"][t] for t in self.parent_nodes}
+            tree = WholeTree(self.D, cart_a, cart_b, self.alpha)
+        except Exception as e:
+            # Initialize randomly
+            is_cart_initialization_failed = True
+            tree = TreeModel(self.D, self.P, self.alpha)
+
+        if is_cart_initialization_failed:
+            logging.info("Initialized randomly")
+        else:
+            logging.info("Initialized by CART")
+
+        return tree
+
     @abstractmethod
     def generate_model(self, data: pd.DataFrame, parent_nodes: list, leaf_nodes: list, warm_start_params: dict = None):
         """Generate the corresponding model instance"""
@@ -145,7 +186,6 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
                 if current_depth == depth:
                     z[i, node] = 1
 
-        logging.info("Modified epsilon is: {0}".format(self.epsilon))
         self.epsilon = epsilon
         cart_params["z"] = z
 
@@ -316,6 +356,63 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
 
 
 class OptimalTreeModel(AbstractOptimalTreeModel):
+
+    def fast_train(self, data: pd.DataFrame):
+        data = self.normalize_data(data)
+        self.K_range = sorted(list(set(data[self.y_col])))
+
+        initialize_trees = []
+        for l in range(10):
+            tree = self.initialize_tree_for_fast_train(data)
+            initialize_trees.append(tree)
+
+        train_x = data.ix[::, self.P_range].values
+        train_y = data.ix[::, self.y_col].values
+
+        manager = multiprocessing.Manager()
+        return_tree_list = manager.list()
+        jobs = []
+        for tree in initialize_trees:
+            job = multiprocessing.Process(target=OptimalTreeModel.fast_train_helper,
+                                          args=(train_x, train_y, tree, self.Nmin, return_tree_list))
+            jobs.append(job)
+            job.start()
+
+        for job in jobs:
+            job.join()
+
+        logging.info("Training done.")
+
+        min_loss_tree_index = 0
+        min_loss = np.inf
+        for i in range(len(return_tree_list)):
+            tree = return_tree_list[i]
+            loss = tree.loss(train_x, train_y)
+            logging.info("Loss for tree [{0}] is {1}".format(i, loss))
+            if loss < min_loss:
+                min_loss = loss
+                min_loss_tree_index = i
+
+        logging.info("The final loss is {0}".format(min_loss))
+
+        optimized_tree = return_tree_list[min_loss_tree_index]
+        self.a = optimized_tree.a
+        self.b = optimized_tree.b
+        self.is_trained = True
+        self.c = {}
+        for t in optimized_tree.c:
+            yt = optimized_tree.c[t]
+            ct = [0 for i in self.K_range]
+            index = self.K_range.index(yt)
+            ct[index] = 1
+            self.c[t] = ct
+
+    @staticmethod
+    def fast_train_helper(train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
+        optimizer = OptimalTreeModelOptimizer(Nmin)
+        optimized_tree = optimizer.local_search(tree, train_x, train_y)
+        return_optimized_tree_list.append(optimized_tree)
+
     def generate_model(self, data: pd.DataFrame, parent_nodes: list, leaf_ndoes: list, warm_start_params: dict = None):
         model = ConcreteModel(name="OptimalTreeModel")
         n = data.shape[0]
