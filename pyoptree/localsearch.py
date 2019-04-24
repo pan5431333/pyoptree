@@ -122,6 +122,7 @@ class OptimalTreeModelOptimizer(AbstractOptimalTreeModelOptimizer):
             for i in range(n - 1):
                 b = (values[i] + values[i + 1]) / 2
 
+                parent_tree.a[parent_node] = np.zeros(p)
                 parent_tree.a[parent_node][j] = 1
                 parent_tree.b[parent_node] = b
                 error, min_leaf_size = parent_tree.loss_and_min_leaf_size(x, y)
