@@ -108,6 +108,12 @@ class OptimalTreeModelOptimizer(AbstractOptimalTreeModelOptimizer):
         error_best = np.inf
         best_tree = lower_tree
 
+        parent_node = int(lower_tree.root_node / 2)
+        parent_node_a = np.zeros(p)
+        parent_a = {**{parent_node: parent_node_a}, **lower_tree.a, **upper_tree.a}
+        parent_b = {**{parent_node: 0}, **lower_tree.b, **upper_tree.b}
+        parent_tree = Tree(parent_node, lower_tree.depth + 1, parent_a, parent_b)
+
         logging.debug("Calculating best parallel split for {0} points with dimension {1}".format(n, p))
         for j in range(p):
             logging.debug("Visiting {0}th dimension. Current best error of the subtree: {1}".format(j, error_best))
@@ -116,17 +122,11 @@ class OptimalTreeModelOptimizer(AbstractOptimalTreeModelOptimizer):
             for i in range(n - 1):
                 b = (values[i] + values[i + 1]) / 2
 
-                parent_node = int(lower_tree.root_node / 2)
-                parent_node_a = np.zeros(p)
-                parent_node_a[j] = 1
-                parent_a = {**{parent_node: parent_node_a}, **lower_tree.a, **upper_tree.a}
-                parent_b = {**{parent_node: b}, **lower_tree.b, **upper_tree.b}
-                parent_tree = Tree(parent_node, lower_tree.depth + 1, parent_a, parent_b)
-
-                min_leaf_size = parent_tree.min_leaf_size(x)
+                parent_tree.a[parent_node][j] = 1
+                parent_tree.b[parent_node] = b
+                error, min_leaf_size = parent_tree.loss_and_min_leaf_size(x, y)
 
                 if min_leaf_size >= self.Nmin:
-                    error = parent_tree.loss(x, y)
 
                     if error < error_best:
                         error_best = error

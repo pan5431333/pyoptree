@@ -76,9 +76,9 @@ class Tree(metaclass=ABCMeta):
         return self.subtree(self.root_node * 2), self.subtree(self.root_node * 2 + 1)
 
     def min_leaf_size(self, x):
-        leaf_samples_mapping = self.evaluate(x)
-        leaf_samples_count = {t: len(leaf_samples_mapping[t]) for t in leaf_samples_mapping}
-        return min(leaf_samples_count.values())
+        fake_y = np.zeros(x.shape[0])
+        loss, min_leaf_size = self.loss_and_min_leaf_size(x, fake_y)
+        return min_leaf_size
 
     def evaluate(self, x):
         n = x.shape[0]
@@ -99,6 +99,10 @@ class Tree(metaclass=ABCMeta):
         return leaf_samples_mapping
 
     def loss(self, x, y):
+        loss, min_leaf_size = self.loss_and_min_leaf_size(x, y)
+        return loss
+
+    def loss_and_min_leaf_size(self, x, y):
         assert x.shape[0] == y.shape[0], "Number of rows of x should be equal to length of y! ({0} != {1})".format(
             x.shape[0], y.shape[0]
         )
@@ -117,7 +121,12 @@ class Tree(metaclass=ABCMeta):
 
         tree_complexity = 0 if len(self.get_parent_nodes()) == 0 else sum(
             [sum(self.a[t]) for t in self.get_parent_nodes()]) / len(self.get_parent_nodes())
-        return sum([y[i] != predict_y[i] for i in range(y.shape[0])]) / y.shape[0] + self.alpha * tree_complexity
+
+        loss = sum([y[i] != predict_y[i] for i in range(y.shape[0])]) / y.shape[0] + self.alpha * tree_complexity
+
+        leaf_samples_count = {t: len(res[t]) for t in res}
+        min_leaf_size = min(leaf_samples_count.values())
+        return loss, min_leaf_size
 
     def generate_majority_leaf_class(self, x, y):
         assert x.shape[0] == y.shape[0], "Number of rows of x should be equal to length of y! ({0} != {1})".format(

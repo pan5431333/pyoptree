@@ -357,12 +357,12 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
 
 class OptimalTreeModel(AbstractOptimalTreeModel):
 
-    def fast_train(self, data: pd.DataFrame):
+    def fast_train(self, data: pd.DataFrame, num_initialize_trees: int = 10):
         data = self.normalize_data(data)
         self.K_range = sorted(list(set(data[self.y_col])))
 
         initialize_trees = []
-        for l in range(10):
+        for l in range(num_initialize_trees):
             tree = self.initialize_tree_for_fast_train(data)
             initialize_trees.append(tree)
 
