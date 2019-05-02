@@ -5,7 +5,7 @@ import random
 
 
 class Tree(metaclass=ABCMeta):
-    def __init__(self, root_node: int, depth: int, a: dict, b: dict, alpha: float = 0.1):
+    def __init__(self, root_node: int, depth: int, a: dict, b: dict, alpha: float = 0.0):
         self.root_node = root_node
         self.depth = depth
         self.a = a
@@ -38,7 +38,7 @@ class Tree(metaclass=ABCMeta):
             subtree_a[left_node] = self.a[left_node].copy()
             subtree_b[left_node] = self.b[left_node]
 
-        return Tree(root_node, whole_depth - parent_depth, subtree_a, subtree_b)
+        return Tree(root_node, whole_depth - parent_depth, subtree_a, subtree_b, alpha=self.alpha)
 
     def get_nodes(self):
         nodes = [self.root_node]
@@ -122,10 +122,12 @@ class Tree(metaclass=ABCMeta):
                 for i in x_indices_this_node:
                     predict_y[i] = label_this_node
 
-        tree_complexity = 0 if len(self.get_parent_nodes()) == 0 else sum(
-            [sum(self.a[t]) for t in self.get_parent_nodes()]) / len(self.get_parent_nodes())
+        tree_complexity = 0.0 if len(self.get_parent_nodes()) == 0 else sum(
+            [sum([1 if a != 0 else 0 for a in self.a[t]]) for t in self.get_parent_nodes()]) / float(
+            len(self.get_parent_nodes()))
 
-        loss = sum([y[i] != predict_y[i] for i in range(y.shape[0])]) / y.shape[0] + self.alpha * tree_complexity
+        loss = sum([1 if y[i] != predict_y[i] else 0 for i in range(y.shape[0])]) / y.shape[
+            0] + self.alpha * tree_complexity
 
         leaf_samples_count = {t: len(res[t]) for t in res}
         min_leaf_size = min([i for i in leaf_samples_count.values() if i > 0])
@@ -147,7 +149,7 @@ class Tree(metaclass=ABCMeta):
         self.c = predict_leaf_value
 
     def copy(self):
-        return Tree(self.root_node, self.depth, self.a.copy(), self.b.copy())
+        return Tree(self.root_node, self.depth, self.a.copy(), self.b.copy(), self.alpha)
 
 
 class WholeTree(Tree):
