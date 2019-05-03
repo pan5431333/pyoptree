@@ -33,6 +33,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         self.is_trained = False
         self.parent_nodes, self.leaf_ndoes = self.generate_nodes(self.D)
         self.normalizer = {}
+        self.pool = None
 
         # optimization model
         self.model = None
@@ -113,12 +114,13 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         logging.info("Training done(Contd.): training accuracy: {0}".format(1 - sum(self.Lt.values()) / data.shape[0]))
 
     @abstractmethod
-    def fast_train_helper(self, train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
+    def fast_train_helper(self, train_x, train_y, tree: Tree, Nmin: int, return_tree_list):
         pass
 
     def fast_train(self, data: pd.DataFrame, num_initialize_trees: int = 10):
         data = self.normalize_data(data)
         self.K_range = sorted(list(set(data[self.y_col])))
+        self.pool = multiprocessing.Pool()
 
         alpha = self.alpha
         initialize_trees = []
@@ -422,11 +424,10 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
 
 
 class OptimalTreeModel(AbstractOptimalTreeModel):
-
-    def fast_train_helper(self, train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
+    def fast_train_helper(self, train_x, train_y, tree: Tree, Nmin: int, return_tree_list):
         optimizer = OptimalTreeModelOptimizer(Nmin)
         optimized_tree = optimizer.local_search(tree, train_x, train_y)
-        return_optimized_tree_list.append(optimized_tree)
+        return_tree_list.append(optimized_tree)
 
     def generate_model(self, data: pd.DataFrame, parent_nodes: list, leaf_ndoes: list, warm_start_params: dict = None):
         model = ConcreteModel(name="OptimalTreeModel")
@@ -577,8 +578,9 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
         parent_nodes, leaf_nodes = self.generate_nodes(D)
 
         ret["l"] = {t: self.extract_solution_l(complete_incomplete_nodes_mapping, t) for t in leaf_nodes}
-        ret_c_helper = {t: self.extract_solution_c(self.K_range, members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
-                        for t in leaf_nodes}
+        ret_c_helper = {
+            t: self.extract_solution_c(self.K_range, members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+            for t in leaf_nodes}
         ret["c"] = {(k, t): ret_c_helper[t][kk] for kk, k in enumerate(self.K_range) for t in leaf_nodes}
 
         ret["d"] = {t: 1 if (complete_incomplete_nodes_mapping[t] != -1 and
@@ -589,9 +591,11 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
                     self.P_range for t in parent_nodes}
         ret["Nt"] = {t: self.extract_solution_Nt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping) for
                      t in leaf_nodes}
-        ret["Nkt"] = {(k, t): self.extract_solution_Nkt(members, t, kk, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
-                      for kk, k in enumerate(self.K_range) for t in leaf_nodes}
-        ret["Lt"] = {t: OptimalTreeModel.extract_solution_Lt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+        ret["Nkt"] = {
+            (k, t): self.extract_solution_Nkt(members, t, kk, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+            for kk, k in enumerate(self.K_range) for t in leaf_nodes}
+        ret["Lt"] = {
+            t: OptimalTreeModel.extract_solution_Lt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
             for t in leaf_nodes}
         ret["bt"] = {t: 0 if members["threshold"][complete_incomplete_nodes_mapping[t]] <= 0 else
         members["threshold"][complete_incomplete_nodes_mapping[t]] for t in parent_nodes}
@@ -757,10 +761,10 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         super(OptimalHyperTreeModel, self).train(data, train_method, show_training_process,
                                                  warm_start, num_initialize_trees)
 
-    def fast_train_helper(self, train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
+    def fast_train_helper(self, train_x, train_y, tree: Tree, Nmin: int, return_tree_list):
         optimizer = OptimalHyperTreeModelOptimizer(Nmin, self.H)
         optimized_tree = optimizer.local_search(tree, train_x, train_y)
-        return_optimized_tree_list.append(optimized_tree)
+        return_tree_list.append(optimized_tree)
 
     def generate_model(self, data: pd.DataFrame, parent_nodes: list, leaf_ndoes: list, warm_start_params: dict = None):
         model = ConcreteModel(name="OptimalTreeModel")
@@ -951,8 +955,10 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         parent_nodes, leaf_nodes = self.generate_nodes(D)
 
         ret["l"] = {t: OptimalTreeModel.extract_solution_l(complete_incomplete_nodes_mapping, t) for t in leaf_nodes}
-        ret_c_helper = {t: OptimalTreeModel.extract_solution_c(self.K_range, members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
-                        for t in leaf_nodes}
+        ret_c_helper = {
+            t: OptimalTreeModel.extract_solution_c(self.K_range, members, t, complete_incomplete_nodes_mapping,
+                                                   leaf_nodes_mapping)
+            for t in leaf_nodes}
         ret["c"] = {(k, t): ret_c_helper[t][kk] for kk, k in enumerate(self.K_range) for t in leaf_nodes}
 
         ret["d"] = {t: 1 if (complete_incomplete_nodes_mapping[t] >= 0 and
@@ -961,15 +967,20 @@ class OptimalHyperTreeModel(AbstractOptimalTreeModel):
         ret["s"] = {(j, t): self.extract_solution_s(members, complete_incomplete_nodes_mapping, j, t) for j in
                     self.P_range
                     for t in parent_nodes}
-        ret["Nt"] = {t: OptimalTreeModel.extract_solution_Nt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping) for
-                     t in leaf_nodes}
-        ret["Nkt"] = {(k, t): OptimalTreeModel.extract_solution_Nkt(members, t, kk, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+        ret["Nt"] = {
+            t: OptimalTreeModel.extract_solution_Nt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+            for
+            t in leaf_nodes}
+        ret["Nkt"] = {(k, t): OptimalTreeModel.extract_solution_Nkt(members, t, kk, complete_incomplete_nodes_mapping,
+                                                                    leaf_nodes_mapping)
                       for kk, k in enumerate(self.K_range) for t in leaf_nodes}
-        ret["Lt"] = {t: OptimalTreeModel.extract_solution_Lt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
+        ret["Lt"] = {
+            t: OptimalTreeModel.extract_solution_Lt(members, t, complete_incomplete_nodes_mapping, leaf_nodes_mapping)
             for t in leaf_nodes}
         ret["a"] = ret["s"]
         ret["a_hat_jt"] = ret["s"]
-        ret["bt"] = {t: OptimalTreeModel.extract_solution_bt(members, t, complete_incomplete_nodes_mapping) for t in parent_nodes}
+        ret["bt"] = {t: OptimalTreeModel.extract_solution_bt(members, t, complete_incomplete_nodes_mapping) for t in
+                     parent_nodes}
 
         return ret
 
