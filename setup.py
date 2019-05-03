@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='pyoptree',
-    version="0.1.6",
+    version="1.0.0",
     description=(
         "Python Implementation of Bertsimas's paper Optimal Classification Trees."
     ),
@@ -22,7 +22,8 @@ setup(
         'numpy>=1.14.5',
         'pandas>=0.23.1',
         'pyomo>=5.5.0',
-        'scikit-learn>=0.20.0'
+        'scikit-learn>=0.20.0',
+        'tqdm>=4.26.0'
     ],
     classifiers=[
         'Development Status :: 4 - Beta',
