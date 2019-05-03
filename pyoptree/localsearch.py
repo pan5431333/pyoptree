@@ -281,8 +281,8 @@ class OptimalHyperTreeModelOptimizer(OptimalTreeModelOptimizer):
     def parallel_random_tree_restart(h: int, Nmin: int, lower_tree: Tree, upper_tree: Tree, x, y, L: list, sub_x,
                                      sub_y, return_list):
         logging.info("Randomly restarting tree {0}".format(h))
-        hyper_tree, error_hyper = OptimalHyperTreeModelOptimizer.static_best_split(Nmin, lower_tree, upper_tree, x, y,
-                                                                                   L)
+        hyper_tree, error_hyper = OptimalHyperTreeModelOptimizer.static_best_split(Nmin, lower_tree, upper_tree,
+                                                                                   sub_x, sub_y, L)
         error_hyper = hyper_tree.loss(sub_x, sub_y)
         return_list.append({"error": error_hyper, "a": hyper_tree.a[hyper_tree.root_node],
                             "b": hyper_tree.b[hyper_tree.root_node]})
