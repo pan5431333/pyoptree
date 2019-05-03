@@ -335,7 +335,7 @@ class OptimalHyperTreeModelOptimizer(OptimalTreeModelOptimizer):
         best_tree = parent_tree.copy()
 
         error_previous = best_tree.loss(x, y)
-        error_best = np.inf
+        error_best = error_previous
 
         parameter_updated = True
 
