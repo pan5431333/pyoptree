@@ -48,11 +48,22 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         self.Lt = None
         assert tree_depth > 0, "Tree depth must be greater than 0! (Actual: {0})".format(tree_depth)
 
-    def train(self, data: pd.DataFrame, show_training_process: bool = True, warm_start: bool = True):
+    def train(self, data: pd.DataFrame, train_method: str = "ls",
+              show_training_process: bool = True, warm_start: bool = True,
+              num_initialize_trees: int = 10):
+        if train_method == "ls":
+            self.fast_train(data, num_initialize_trees)
+        elif train_method == "mio":
+            self.exact_train(data, show_training_process, warm_start)
+        else:
+            raise ValueError("Illegal train_method! You should use one of 'ls' for local search(fast but local optima)"
+                             "or "
+                             "'mio' for Mixed Integer Optimization (global optima but much slow)")
+
+    def exact_train(self, data: pd.DataFrame, show_training_process: bool = True, warm_start: bool = True):
         data = self.normalize_data(data)
 
         solver = SolverFactory(self.solver_name)
-        solver.options["LPMethod"] = 4
 
         start_tree_depth = 1 if warm_start else self.D
 
@@ -101,9 +112,8 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         logging.info("Training done. Loss: {1}. Optimization status: {0}".format(global_status, global_loss))
         logging.info("Training done(Contd.): training accuracy: {0}".format(1 - sum(self.Lt.values()) / data.shape[0]))
 
-    @staticmethod
     @abstractmethod
-    def fast_train_helper(train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
+    def fast_train_helper(self, train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
         pass
 
     def fast_train(self, data: pd.DataFrame, num_initialize_trees: int = 10):
@@ -413,8 +423,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
 
 class OptimalTreeModel(AbstractOptimalTreeModel):
 
-    @staticmethod
-    def fast_train_helper(train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
+    def fast_train_helper(self, train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
         optimizer = OptimalTreeModelOptimizer(Nmin)
         optimized_tree = optimizer.local_search(tree, train_x, train_y)
         return_optimized_tree_list.append(optimized_tree)
@@ -736,10 +745,20 @@ class OptimalTreeModel(AbstractOptimalTreeModel):
 
 
 class OptimalHyperTreeModel(AbstractOptimalTreeModel):
+    def __init__(self, x_cols: list, y_col: str, tree_depth: int, N_min: int, alpha: float = 0,
+                 num_random_tree_restart: int = 2, M: int = 10, epsilon: float = 1e-4,
+                 solver_name: str = "gurobi"):
+        self.H = num_random_tree_restart
+        super(OptimalHyperTreeModel, self).__init__(x_cols, y_col, tree_depth, N_min, alpha, M, epsilon, solver_name)
 
-    @staticmethod
-    def fast_train_helper(train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
-        optimizer = OptimalHyperTreeModelOptimizer(Nmin)
+    def train(self, data: pd.DataFrame, train_method: str = "ls",
+              show_training_process: bool = True, warm_start: bool = True,
+              num_initialize_trees: int = 1):
+        super(OptimalHyperTreeModel, self).train(data, train_method, show_training_process,
+                                                 warm_start, num_initialize_trees)
+
+    def fast_train_helper(self, train_x, train_y, tree: Tree, Nmin: int, return_optimized_tree_list):
+        optimizer = OptimalHyperTreeModelOptimizer(Nmin, self.H)
         optimized_tree = optimizer.local_search(tree, train_x, train_y)
         return_optimized_tree_list.append(optimized_tree)
 
