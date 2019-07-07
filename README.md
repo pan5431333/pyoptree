@@ -28,7 +28,7 @@ test_data = pd.DataFrame({
     "y": [1, 1, 1, -1, -1, -1, -1]
 })
 model = OptimalHyperTreeModel(["x1", "x2"], "y", tree_depth=2, N_min=1, alpha=0.1, solver_name="cplex")
-model.train(data)
+model.train(data, train_method="mio")
 
 print(model.predict(test_data))
 ```
