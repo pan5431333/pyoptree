@@ -39,7 +39,7 @@ def run_example(depth: int = 2):
 
     # Use PyOptree
     model = OptimalHyperTreeModel(column_names, "label", tree_depth=depth, N_min=1)
-    model.train(train)
+    model.train(train, train_method="mio")
 
     test = model.predict(test)
 
@@ -51,4 +51,5 @@ def run_example(depth: int = 2):
 
 
 if __name__ == "__main__":
-    run_example()
+    run_example(depth=3)
+
