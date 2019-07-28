@@ -5,7 +5,7 @@ import pandas as pd
 from sklearn.datasets import load_breast_cancer as load_data
 from sklearn.tree import DecisionTreeClassifier
 
-from pyoptree.optree import OptimalHyperTreeModel
+from pyoptree.optree import OptimalHyperTreeModel, OptimalTreeModel
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s', )
@@ -38,7 +38,7 @@ def run_example(depth: int = 2):
     predicted_y = clf.predict(test_features_sklearn)
 
     # Use PyOptree
-    model = OptimalHyperTreeModel(column_names, "label", tree_depth=depth, N_min=1)
+    model = OptimalTreeModel(column_names, "label", tree_depth=depth, N_min=1)
     model.train(train, train_method="mio")
 
     test = model.predict(test)
