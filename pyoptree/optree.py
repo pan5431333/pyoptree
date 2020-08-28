@@ -128,8 +128,8 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
             tree = self.initialize_tree_for_fast_train(data, alpha)
             initialize_trees.append(tree)
 
-        train_x = data.ix[::, self.P_range].values
-        train_y = data.ix[::, self.y_col].values
+        train_x = data.iloc[::, self.P_range].values
+        train_y = data.iloc[::, self.y_col].values
 
         manager = multiprocessing.Manager()
         return_tree_list = manager.list()
@@ -192,7 +192,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
             np.random.shuffle(self.P_range)
             subset_features = self.P_range[0:int(np.sqrt(self.P))]
             self.P_range = subset_features
-            subset_data = pd.concat([data.ix[::, subset_features], data.ix[::, self.y_col]], axis=1)
+            subset_data = pd.concat([data.iloc[::, subset_features], data.iloc[::, self.y_col]], axis=1)
             cart_params = self._get_cart_params(subset_data, self.D)
             self.P_range = P_range_bk
             cart_a = {}
@@ -239,7 +239,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
         z = {(i, t): 0 for i in range(0, data.shape[0]) for t in leaf_nodes}
         epsilon = self.epsilon
         for i in range(data.shape[0]):
-            xi = np.array([data.ix[i, j] for j in self.P_range])
+            xi = np.array([data.loc[i, j] for j in self.P_range])
             node = 1
             current_depth = 0
             while current_depth < depth:
@@ -335,7 +335,7 @@ class AbstractOptimalTreeModel(metaclass=ABCMeta):
 
         prediction = []
         for j in range(new_data.shape[0]):
-            x = np.array([new_data.ix[j, i] for i in self.P_range])
+            x = np.array([new_data.loc[j, i] for i in self.P_range])
             t = 1
             d = 0
             while d < self.D:
